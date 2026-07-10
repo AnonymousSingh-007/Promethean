@@ -1,36 +1,29 @@
-// Two gestures, both chosen to be easy to get right on the first try:
-//
-//   FINGER COUNT (one hand, held up): selects an isotope.
-//     1 finger  -> Uranium-235
-//     2 fingers -> Thorium-232
-//     3 fingers -> Plutonium-239
-//     4 fingers -> Uranium-238
-//     (thumb is deliberately ignored — thumb extension detection is unreliable
-//      and hand-orientation-dependent; counting only index/middle/ring/pinky
-//      is far more consistent across webcams and lighting.)
-//
+// Two gestures:
+//   FINGER COUNT (one hand, held up): selects an isotope, but only after the
+//     SAME count has been stable for STABLE_FRAMES_REQUIRED consecutive frames.
+//     This is the debounce fix — without it, natural hand micro-tremor flickers
+//     between adjacent counts (2/3, 3/4) and fires selection changes you never
+//     intended. At ~60fps, 5 frames is well under 100ms — imperceptible as a
+//     delay, but enough to reject single-frame noise.
 //   CLAP (two hands brought together): launches a neutron bombardment at
 //     whatever isotope is currently selected.
-//
-// Both use DISTANCE RATIOS relative to each hand's own palm size, not raw
-// normalized coordinates — this is what makes them work at any distance from
-// the camera, unlike the old fixed-threshold pinch/fist detection.
 
 const FINGER_TIP_PIP = [
-  { tip: 8, pip: 6 },   // index
-  { tip: 12, pip: 10 }, // middle
-  { tip: 16, pip: 14 }, // ring
-  { tip: 20, pip: 18 }, // pinky
+  { tip: 8, pip: 6 },
+  { tip: 12, pip: 10 },
+  { tip: 16, pip: 14 },
+  { tip: 20, pip: 18 },
 ];
 
-const EXTENDED_RATIO = 1.15;    // tip must be this many times farther from wrist than pip to count as "extended"
-const CLAP_DISTANCE_RATIO = 2.2; // wrist-to-wrist distance, in units of avg palm size, below which hands count as "clapped"
-const CLAP_COOLDOWN = 0.45;      // seconds — prevents one clap re-firing repeatedly while hands linger close together
+const EXTENDED_RATIO = 1.15;
+const CLAP_DISTANCE_RATIO = 2.2;
+const CLAP_COOLDOWN = 0.45;
+const STABLE_FRAMES_REQUIRED = 5; // consecutive frames a finger count must hold before it fires
 
 export const GESTURES = {
-  ISOTOPE_SELECTED: 'isotope_selected', // { fingerCount }
-  CLAP: 'clap',                          // { position }
-  HANDS_UPDATE: 'hands_update',          // continuous, for debug HUD only — not logged to terminal
+  ISOTOPE_SELECTED: 'isotope_selected',
+  CLAP: 'clap',
+  HANDS_UPDATE: 'hands_update',
   HAND_FOUND: 'hand_found',
   HAND_LOST: 'hand_lost',
 };
@@ -39,6 +32,8 @@ export class GestureController {
   constructor() {
     this.listeners = {};
     this._lastFingerCount = null;
+    this._pendingCount = null;
+    this._pendingStreak = 0;
     this._lastClapTime = -999;
     this._wasHandsClose = false;
     this._prevHandCount = 0;
@@ -53,7 +48,6 @@ export class GestureController {
     (this.listeners[event] || []).forEach(fn => fn(payload));
   }
 
-  /** Feed this directly from HandTracker's onResults callback — pass `results.landmarks`. */
   update(landmarksList) {
     const now = performance.now() / 1000;
     const handCount = landmarksList.length;
@@ -64,6 +58,8 @@ export class GestureController {
 
     if (handCount === 0) {
       this._wasHandsClose = false;
+      this._pendingCount = null;
+      this._pendingStreak = 0;
       this._emit(GESTURES.HANDS_UPDATE, { handCount: 0, counts: [], selectedFingerCount: this._lastFingerCount });
       return;
     }
@@ -76,14 +72,25 @@ export class GestureController {
       return { hand, wrist, palmSize, count };
     });
 
-    // Primary hand (first in the list) drives isotope selection.
+    // --- Debounced isotope selection ---
     const primary = handsInfo[0];
-    if (primary.count >= 1 && primary.count <= 4 && primary.count !== this._lastFingerCount) {
-      this._lastFingerCount = primary.count;
-      this._emit(GESTURES.ISOTOPE_SELECTED, { fingerCount: primary.count });
+    if (primary.count >= 1 && primary.count <= 4) {
+      if (primary.count === this._pendingCount) {
+        this._pendingStreak++;
+      } else {
+        this._pendingCount = primary.count;
+        this._pendingStreak = 1;
+      }
+      if (this._pendingStreak >= STABLE_FRAMES_REQUIRED && primary.count !== this._lastFingerCount) {
+        this._lastFingerCount = primary.count;
+        this._emit(GESTURES.ISOTOPE_SELECTED, { fingerCount: primary.count });
+      }
+    } else {
+      this._pendingCount = null;
+      this._pendingStreak = 0;
     }
 
-    // Clap needs two hands present.
+    // --- Clap ---
     let clapDistance = null;
     if (handsInfo.length >= 2) {
       const [a, b] = handsInfo;
@@ -105,6 +112,8 @@ export class GestureController {
       handCount,
       counts: handsInfo.map(h => h.count),
       selectedFingerCount: this._lastFingerCount,
+      pendingCount: this._pendingCount,
+      pendingStreak: this._pendingStreak,
       clapDistance: clapDistance !== null ? clapDistance.toFixed(2) : null,
     });
   }
