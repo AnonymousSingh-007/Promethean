@@ -1,14 +1,10 @@
-// Trail particles for in-flight neutrons. Position is updated on the CPU
-// each frame (see ParticleSystem.js -> curl noise advection) and pushed in
-// via the position attribute directly, so this shader just handles size/fade.
-
 uniform float uTime;
 attribute float aBirth;
 attribute float aSize;
 
 varying float vAlpha;
 
-const float TRAIL_LIFETIME = 0.4;
+const float TRAIL_LIFETIME = 0.55; // slightly longer than NEUTRON_TRAVEL_TIME so the tail is visible on arrival
 
 void main() {
   float age = uTime - aBirth;

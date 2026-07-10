@@ -32,7 +32,7 @@ chainReaction.on('atom_fissioned', ({ atomId }) => sceneManager.killAtomVisual(a
 sceneManager.buildAtomCluster(chainReaction, 'U235', 80, { radius: 6, color: ISOTOPES.U235.color });
 chainReaction.buildNeighborGraph();
 
-// --- Live gesture debug readout — watch these numbers to tune thresholds in GestureController.js ---
+// --- Live gesture debug readout ---
 gestures.on(GESTURES.DEBUG, (d) => {
   if (!d.handVisible) {
     gestureDebugEl.textContent = 'NO HAND VISIBLE';
@@ -68,12 +68,17 @@ gestures.on(GESTURES.PINCH_END, ({ position }) => {
 
 gestures.on(GESTURES.THROW, ({ origin }) => {
   const atomId = sceneManager.raycastAtom(origin.x, origin.y);
-  if (atomId !== null) chainReaction.strikeAtom(atomId);
+  if (atomId !== null) {
+    const worldOrigin = sceneManager.screenToWorldPoint(origin.x, origin.y, 14);
+    chainReaction.strikeAtom(atomId, { origin: worldOrigin });
+  }
 });
 
-gestures.on(GESTURES.FIST, ({ intensity }) => {
+// FIST = bombard. Neutrons now visibly launch from your hand's 3D position toward the cluster.
+gestures.on(GESTURES.FIST, ({ position, intensity }) => {
+  const worldOrigin = sceneManager.screenToWorldPoint(position.x, position.y, 14);
   const count = Math.round(5 * intensity);
-  chainReaction.bombardAtoms(count);
+  chainReaction.bombardAtoms(count, worldOrigin);
 });
 
 // --- Hand tracking bootstrap ---
@@ -97,12 +102,15 @@ function initFallbackControls() {
     const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
     const ndcY = -(e.clientY / window.innerHeight) * 2 + 1;
     const atomId = sceneManager.raycastAtom(ndcX, ndcY);
-    if (atomId !== null) chainReaction.strikeAtom(atomId);
+    if (atomId !== null) {
+      const worldOrigin = sceneManager.screenToWorldPoint(ndcX, ndcY, 14);
+      chainReaction.strikeAtom(atomId, { origin: worldOrigin });
+    }
   });
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space') {
       e.preventDefault();
-      chainReaction.bombardAtoms(6);
+      chainReaction.bombardAtoms(6, { x: 0, y: 0, z: 14 });
     }
   });
 }
@@ -111,11 +119,13 @@ initTracking();
 
 // --- Render loop ---
 let lastTime = performance.now();
+let elapsed = 0;
 function animate() {
   requestAnimationFrame(animate);
   const now = performance.now();
   const dt = Math.min((now - lastTime) / 1000, 1 / 30);
   lastTime = now;
+  elapsed += dt;
 
   handTracker.tick();
   hitStop.update(dt);
@@ -124,6 +134,7 @@ function animate() {
     chainReaction.step(dt);
   }
   particles.update(dt);
+  sceneManager.updateAtoms(dt, elapsed);
   hud.update(chainReaction.stats);
 
   sceneManager.scene.rotation.y += dt * 0.05;

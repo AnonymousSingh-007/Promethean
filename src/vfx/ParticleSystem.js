@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { EVENTS } from '../physics/ChainReaction.js';
+import { NEUTRON_TRAVEL_TIME } from '../physics/constants.js';
 import { CurlNoiseField } from './CurlNoiseField.js';
 import fissionVert from './shaders/fission.vert.glsl?raw';
 import fissionFrag from './shaders/fission.frag.glsl?raw';
@@ -20,10 +21,9 @@ export class ParticleSystem {
 
     this._burstCursor = 0;
     this._trailCursor = 0;
-    this._activeTrails = new Map(); // neutronId -> { index, from, to, spawnTime }
+    this._activeTrails = new Map();
   }
 
-  /** Wire this up once you have a live ChainReaction + HitStop instance. */
   attachTo(chainReaction, hitStop) {
     chainReaction.on(EVENTS.NEUTRON_SPAWNED, (e) => this._spawnTrail(e));
     chainReaction.on(EVENTS.NEUTRON_ARRIVED, (e) => this._retireTrail(e));
@@ -62,7 +62,7 @@ export class ParticleSystem {
     this.scene.add(this.burstPoints);
   }
 
-  _spawnBurst(position, energy, particleCount = 40, color = [1, 0.6, 0.3]) {
+  _spawnBurst(position, energy, particleCount = 50, color = [1, 0.6, 0.3]) {
     const geo = this.burstPoints.geometry;
     const posAttr = geo.attributes.position;
     const velAttr = geo.attributes.aVelocity;
@@ -82,7 +82,7 @@ export class ParticleSystem {
       velAttr.setXYZ(idx, dir.x * speed, dir.y * speed, dir.z * speed);
 
       startAttr.setX(idx, this.clock.time);
-      sizeAttr.setX(idx, 8 + Math.random() * 6);
+      sizeAttr.setX(idx, 10 + Math.random() * 8);
       colorAttr.setXYZ(idx, color[0], color[1], color[2]);
     }
 
@@ -121,18 +121,14 @@ export class ParticleSystem {
   _spawnTrail({ id, from, to }) {
     const idx = this._trailCursor;
     this._trailCursor = (this._trailCursor + 1) % MAX_TRAIL_PARTICLES;
-    this._activeTrails.set(id, { index: idx, from, to, spawnTime: this.clock.time, pos: { ...from } });
+    this._activeTrails.set(id, { index: idx, from, to, spawnTime: this.clock.time });
     this.trailPoints.geometry.attributes.aBirth.setX(idx, this.clock.time);
-    this.trailPoints.geometry.attributes.aSize.setX(idx, 6);
+    this.trailPoints.geometry.attributes.aSize.setX(idx, 10);
   }
 
   _retireTrail({ id }) {
-    // Just let it fade via the shader's TRAIL_LIFETIME — no need to hard-remove,
-    // keeps this O(1) instead of shuffling the buffer.
     this._activeTrails.delete(id);
   }
-
-  // --- Per-frame update -----------------------------------------------------
 
   update(dt) {
     this.clock.time += dt;
@@ -140,7 +136,6 @@ export class ParticleSystem {
     this.trailPoints.material.uniforms.uTime.value = this.clock.time;
 
     const posAttr = this.trailPoints.geometry.attributes.position;
-    const NEUTRON_TRAVEL_TIME = 0.35; // must match ChainReaction.js — consider lifting to a shared constants file
 
     for (const [, trail] of this._activeTrails) {
       const t = Math.min(1, (this.clock.time - trail.spawnTime) / NEUTRON_TRAVEL_TIME);
@@ -149,10 +144,9 @@ export class ParticleSystem {
         y: lerp(trail.from.y, trail.to.y, t),
         z: lerp(trail.from.z, trail.to.z, t),
       };
-      // fake-fluid wobble on top of the straight-line lerp, so it doesn't look robotic
       const curl = this.curl.sample(lerped, this.clock.time);
-      trail.pos = { x: lerped.x + curl.x, y: lerped.y + curl.y, z: lerped.z + curl.z };
-      posAttr.setXYZ(trail.index, trail.pos.x, trail.pos.y, trail.pos.z);
+      const pos = { x: lerped.x + curl.x, y: lerped.y + curl.y, z: lerped.z + curl.z };
+      posAttr.setXYZ(trail.index, pos.x, pos.y, pos.z);
     }
     posAttr.needsUpdate = true;
   }

@@ -1,43 +1,40 @@
 import { getIsotope, randomNeutronCount } from './IsotopeData.js';
+import { NEUTRON_TRAVEL_TIME } from './constants.js';
 
 // ChainReaction is a pure simulation — no Three.js, no rendering, no DOM.
 // It owns a graph of atoms in 3D space and a live queue of in-flight neutrons.
-// Every frame you call `step(dt)`, and it emits events (via the callback list below)
-// that the VFX layer subscribes to and turns into particles/shaders/hit-stop.
-//
-// Why a graph instead of a real physics engine:
-// - We don't need collision accuracy, we need EXPONENTIAL BRANCHING that looks good.
-// - Each atom just needs neighbors (precomputed once from spatial proximity).
-// - A neutron "in flight" is just a lerp from source atom to target atom over a fixed duration.
-// - On arrival, roll fissionProbability. Success -> emit N new neutrons to random neighbors.
-// This is O(neutrons) per frame, trivially fast, and gives you cascades of arbitrary depth.
+// Every frame you call `step(dt)`, and it emits events that the VFX layer
+// subscribes to and turns into particles/shaders/hit-stop.
 
 export const EVENTS = {
   ATOM_HIT: 'atom_hit',
   ATOM_FISSIONED: 'atom_fissioned',
-  ATOM_ABSORBED: 'atom_absorbed', // hit but did not fission
+  ATOM_ABSORBED: 'atom_absorbed',
   NEUTRON_SPAWNED: 'neutron_spawned',
   NEUTRON_ARRIVED: 'neutron_arrived',
   CASCADE_COMPLETE: 'cascade_complete',
 };
 
-const NEUTRON_TRAVEL_TIME = 0.35; // seconds, tune for pacing/legibility
+// Default point neutrons originate from when no explicit origin is given
+// (e.g. a cascade continuation always has a real source atom; only the
+// very first strike in a chain needs a fallback).
+const DEFAULT_ORIGIN = { x: 0, y: 0, z: 14 };
 
 class Atom {
   constructor(id, position, isotopeId) {
     this.id = id;
-    this.position = position; // THREE.Vector3-like {x,y,z}, kept as plain object so this stays framework-agnostic
+    this.position = position;
     this.isotopeId = isotopeId;
     this.alive = true;
-    this.neighbors = []; // filled by ChainReaction.buildNeighborGraph()
+    this.neighbors = [];
   }
 }
 
 class Neutron {
-  constructor(id, fromAtom, toAtom, spawnTime) {
+  constructor(id, fromPosition, toAtom, spawnTime) {
     this.id = id;
-    this.from = fromAtom;
-    this.to = toAtom;
+    this.from = fromPosition; // plain {x,y,z} — where this neutron visually started
+    this.to = toAtom;         // Atom instance — the actual sim target
     this.spawnTime = spawnTime;
     this.arrived = false;
   }
@@ -45,8 +42,8 @@ class Neutron {
 
 export class ChainReaction {
   constructor({ neighborRadius = 3.5, maxNeighbors = 6 } = {}) {
-    this.atoms = new Map();       // id -> Atom
-    this.neutrons = new Map();    // id -> Neutron
+    this.atoms = new Map();
+    this.neutrons = new Map();
     this.neighborRadius = neighborRadius;
     this.maxNeighbors = maxNeighbors;
     this.listeners = {};
@@ -81,7 +78,6 @@ export class ChainReaction {
     return atom;
   }
 
-  /** Call once after all atoms are placed. O(n^2) but clusters are small (tens-hundreds), fine for a weekend build. */
   buildNeighborGraph() {
     const list = [...this.atoms.values()];
     for (const a of list) {
@@ -95,39 +91,42 @@ export class ChainReaction {
     }
   }
 
-  // --- Triggering a strike ---------------------------------------------------
-  // Call this when the user's "throw" gesture lands on an atom (raycast hit in SceneManager).
+  // --- Triggering strikes ---------------------------------------------------
 
-  strikeAtom(atomId, { depth = 0 } = {}) {
+  /**
+   * Fire a single neutron at a specific atom (used by THROW).
+   * `origin` is a plain {x,y,z} — pass the hand's 3D position so the neutron
+   * visibly travels from your hand to the target, rather than popping in place.
+   */
+  strikeAtom(atomId, { origin = null, depth = 0 } = {}) {
     const atom = this.atoms.get(atomId);
     if (!atom || !atom.alive) return;
-    this._spawnNeutron(null, atom, depth);
+    this._spawnNeutron(origin ?? DEFAULT_ORIGIN, atom, depth);
   }
 
   /**
    * Bombard the cluster with `count` neutrons aimed at random alive atoms at once —
-   * this is what the FIST gesture triggers. Each one starts its own cascade (depth 0),
-   * and since they land on random atoms roughly simultaneously, you get overlapping
-   * chain reactions rather than one clean line — much better visually.
+   * this is what the FIST gesture triggers. `origin` should be the hand's 3D
+   * position so all of them visibly launch from your fist toward the cluster.
    */
-  bombardAtoms(count = 5) {
+  bombardAtoms(count = 5, origin = null) {
     const alive = [...this.atoms.values()].filter(a => a.alive);
     if (alive.length === 0) return;
     const shuffled = [...alive].sort(() => Math.random() - 0.5);
     const targets = shuffled.slice(0, Math.min(count, alive.length));
     for (const atom of targets) {
-      this._spawnNeutron(null, atom, 0);
+      this._spawnNeutron(origin ?? DEFAULT_ORIGIN, atom, 0);
     }
   }
 
-  _spawnNeutron(fromAtom, toAtom, depth) {
+  _spawnNeutron(fromPosition, toAtom, depth) {
     const id = this._nextNeutronId++;
-    const n = new Neutron(id, fromAtom, toAtom, this.time);
+    const n = new Neutron(id, fromPosition, toAtom, this.time);
     this.neutrons.set(id, n);
     this._depthByNeutron.set(id, depth);
     this.stats.liveNeutrons++;
     this._emit(EVENTS.NEUTRON_SPAWNED, {
-      id, from: fromAtom ? fromAtom.position : toAtom.position, to: toAtom.position, depth,
+      id, from: fromPosition, to: toAtom.position, depth,
     });
   }
 
@@ -167,7 +166,7 @@ export class ChainReaction {
     const atom = n.to;
     this._emit(EVENTS.NEUTRON_ARRIVED, { id: neutronId, position: atom.position, depth });
 
-    if (!atom.alive) return; // already fissioned earlier in this cascade, treat as absorbed into debris
+    if (!atom.alive) return;
 
     this._emit(EVENTS.ATOM_HIT, { atomId: atom.id, position: atom.position, isotopeId: atom.isotopeId, depth });
 
@@ -190,7 +189,7 @@ export class ChainReaction {
     const emitCount = randomNeutronCount(iso.neutronsEmitted);
     const targets = pickRandomAliveNeighbors(atom, emitCount);
     for (const target of targets) {
-      this._spawnNeutron(atom, target, depth + 1);
+      this._spawnNeutron(atom.position, target, depth + 1); // real source atom this time — cascade neutrons always travel visibly
     }
   }
 
