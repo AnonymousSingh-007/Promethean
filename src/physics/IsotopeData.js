@@ -33,15 +33,26 @@ export const ISOTOPES = {
     energy: 60,
     color: 0x6C8CFF,
   },
+  Cf252: {
+    id: 'Cf252',
+    label: 'Californium-252',
+    fissionProbability: 0.97, // real Cf-252 undergoes spontaneous fission — stylized as near-certain here
+    neutronsEmitted: [3, 5],
+    energy: 320,
+    color: 0xE28CFF,
+  },
 };
 
-// Held-up finger count -> isotope. Thumb is deliberately excluded from counting
-// (see GestureController.js) so this only ever resolves to 1-4.
+// Held-up finger count -> isotope. Thumb is now counted as a 5th digit to
+// unlock Cf-252 — flagged as less reliable than the original 4 (see
+// GestureController.js), since thumb-extension detection is inherently
+// noisier than the other four fingers. Keyboard fallback key '5' always works.
 export const FINGER_COUNT_TO_ISOTOPE = {
   1: 'U235',
   2: 'Th232',
   3: 'Pu239',
   4: 'U238',
+  5: 'Cf252',
 };
 
 export function getIsotope(id) {

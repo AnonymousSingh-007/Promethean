@@ -1,7 +1,3 @@
-// Minimal Web Audio beeps — no audio files, no dependencies. Browsers require
-// a user gesture before audio can play; the first hand-tracking gesture that
-// fires will implicitly unlock it (AudioContext auto-resumes on first call).
-
 let ctx = null;
 function getContext() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -9,7 +5,6 @@ function getContext() {
   return ctx;
 }
 
-/** Short rising blip on isotope selection — pitch varies by finger count so each isotope has a distinct "voice". */
 export function playSelectTone(index = 0) {
   const c = getContext();
   const osc = c.createOscillator();
@@ -24,18 +19,20 @@ export function playSelectTone(index = 0) {
   osc.stop(c.currentTime + 0.2);
 }
 
-/** Low descending thump on clap/bombardment. */
-export function playClapTone() {
+/** intensity: neutron count for this clap (5/20/50) — scales pitch drop and loudness so a HIGH clap audibly hits harder. */
+export function playClapTone(intensity = 20) {
   const c = getContext();
   const osc = c.createOscillator();
   const gain = c.createGain();
   osc.type = 'triangle';
-  osc.frequency.setValueAtTime(180, c.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(60, c.currentTime + 0.25);
+  const scale = Math.min(1, intensity / 50);
+  osc.frequency.setValueAtTime(180 - scale * 60, c.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(45, c.currentTime + 0.25 + scale * 0.15);
+  const peakGain = 0.2 + scale * 0.25;
   gain.gain.setValueAtTime(0.0001, c.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.3, c.currentTime + 0.01);
-  gain.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + 0.3);
+  gain.gain.exponentialRampToValueAtTime(peakGain, c.currentTime + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + 0.35 + scale * 0.15);
   osc.connect(gain).connect(c.destination);
   osc.start();
-  osc.stop(c.currentTime + 0.32);
+  osc.stop(c.currentTime + 0.55);
 }

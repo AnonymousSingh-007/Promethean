@@ -70,13 +70,6 @@ export class ChainReaction {
     return atom;
   }
 
-  /**
-   * Call once after ALL clusters are placed. Since clusters are spatially
-   * separated by design (see SceneManager.buildAtomCluster offsets) and
-   * neighborRadius is small relative to that separation, atoms only ever
-   * end up neighboring others in their own cluster — cascades stay contained
-   * to whichever isotope you actually bombarded.
-   */
   buildNeighborGraph() {
     const list = [...this.atoms.values()];
     for (const a of list) {
@@ -90,6 +83,18 @@ export class ChainReaction {
     }
   }
 
+  /**
+   * Revives every atom of a given isotope back to alive=true. This is what
+   * gives a cluster a "fresh start" every time you select it — without this,
+   * a high-fission-probability isotope like U-235 or Pu-239 can fully consume
+   * its 35-atom cluster in a single cascade and then permanently show nothing.
+   */
+  resetIsotope(isotopeId) {
+    for (const atom of this.atoms.values()) {
+      if (atom.isotopeId === isotopeId) atom.alive = true;
+    }
+  }
+
   // --- Triggering strikes ---------------------------------------------------
 
   strikeAtom(atomId, { origin = null, depth = 0 } = {}) {
@@ -98,16 +103,11 @@ export class ChainReaction {
     this._spawnNeutron(origin ?? DEFAULT_ORIGIN, atom, depth);
   }
 
-  /** Bombard ALL isotopes at once (used by the spacebar fallback). */
   bombardAtoms(count = 5, origin = null) {
     const alive = [...this.atoms.values()].filter(a => a.alive);
     return this._bombard(alive, count, origin);
   }
 
-  /**
-   * Bombard only atoms of a specific isotope — this is what CLAP triggers,
-   * targeting whichever isotope the finger-count gesture last selected.
-   */
   bombardIsotope(isotopeId, count = 5, origin = null) {
     const alive = [...this.atoms.values()].filter(a => a.alive && a.isotopeId === isotopeId);
     return this._bombard(alive, count, origin);
@@ -129,7 +129,9 @@ export class ChainReaction {
     this.neutrons.set(id, n);
     this._depthByNeutron.set(id, depth);
     this.stats.liveNeutrons++;
-    this._emit(EVENTS.NEUTRON_SPAWNED, { id, from: fromPosition, to: toAtom.position, depth });
+    this._emit(EVENTS.NEUTRON_SPAWNED, {
+      id, from: fromPosition, to: toAtom.position, isotopeId: toAtom.isotopeId, depth,
+    });
   }
 
   // --- Simulation step ---------------------------------------------------
