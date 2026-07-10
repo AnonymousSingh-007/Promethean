@@ -104,6 +104,22 @@ export class ChainReaction {
     this._spawnNeutron(null, atom, depth);
   }
 
+  /**
+   * Bombard the cluster with `count` neutrons aimed at random alive atoms at once —
+   * this is what the FIST gesture triggers. Each one starts its own cascade (depth 0),
+   * and since they land on random atoms roughly simultaneously, you get overlapping
+   * chain reactions rather than one clean line — much better visually.
+   */
+  bombardAtoms(count = 5) {
+    const alive = [...this.atoms.values()].filter(a => a.alive);
+    if (alive.length === 0) return;
+    const shuffled = [...alive].sort(() => Math.random() - 0.5);
+    const targets = shuffled.slice(0, Math.min(count, alive.length));
+    for (const atom of targets) {
+      this._spawnNeutron(null, atom, 0);
+    }
+  }
+
   _spawnNeutron(fromAtom, toAtom, depth) {
     const id = this._nextNeutronId++;
     const n = new Neutron(id, fromAtom, toAtom, this.time);

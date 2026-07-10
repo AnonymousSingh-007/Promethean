@@ -1,72 +1,91 @@
 # Promethean
 
-Hand-tracked isotope selection → neutrino strike → simulated fission chain reaction, rendered with anime-style hit VFX and fake fluid (curl-noise) particle trails.
+Hand-tracked neutron bombardment → simulated fission chain reaction, rendered with
+anime-style hit VFX and fake-fluid (curl-noise) particle trails.
 
 Built by Samratth & Lakshit.
 
+## Controls
+
+| Gesture              | Action                                              |
+|-----------------------|------------------------------------------------------|
+| Pinch (thumb + index)  | Open radial isotope menu at hand position            |
+| Release pinch          | Confirm isotope selection                            |
+| Fast hand throw         | Fire a single neutron at whatever atom you're pointing at |
+| **Fist (closed hand)**  | **Bombard the cluster** — fires a burst of neutrons at once, punch speed scales the burst size |
+
+No webcam? Fallback controls kick in automatically:
+- **Click** an atom to strike it
+- **Spacebar** to bombard (same as a fist)
+
 ## Stack
+
 - **Vite** — dev server / bundler
 - **Three.js** — 3D scene, particles, custom shader materials
-- **MediaPipe Tasks Vision (HandLandmarker)** — webcam hand tracking, runs client-side
-- **Vanilla JS**, no framework — keeps it light and fast to iterate on over a weekend
+- **MediaPipe Tasks Vision (HandLandmarker)** — client-side webcam hand tracking
+- Vanilla JS, no framework — fast to iterate on over a weekend
 
 ## Folder structure
 
-```
+\`\`\`
 promethean/
-├── index.html                 # entry point, canvas + video element
+├── index.html
 ├── package.json
 ├── vite.config.js
+├── .gitignore
 ├── public/
-│   └── models/                # MediaPipe .task model file goes here (downloaded on first run)
+│   └── models/                # MediaPipe .task model (fetched from CDN at runtime by default)
 └── src/
     ├── main.js                 # bootstraps everything, owns the render loop
     ├── core/
-    │   ├── HandTracker.js       # wraps MediaPipe, emits landmark + gesture events
-    │   ├── GestureController.js # turns raw landmarks into semantic gestures (pinch, throw, open-palm)
-    │   └── SceneManager.js      # Three.js scene/camera/renderer setup, atom cluster layout
+    │   ├── HandTracker.js       # MediaPipe wrapper, emits landmark + gesture events
+    │   ├── GestureController.js # raw landmarks -> pinch / open-palm / throw / fist
+    │   └── SceneManager.js      # Three.js scene/camera/renderer, atom cluster layout
     ├── physics/
-    │   ├── IsotopeData.js       # isotope definitions: fission probability, neutrons emitted, energy, color
-    │   └── ChainReaction.js     # the actual reaction graph/sim — no real physics engine needed
+    │   ├── IsotopeData.js       # isotope definitions (currently U-235 only for v1)
+    │   └── ChainReaction.js     # the reaction sim — branching graph, no physics engine
     ├── vfx/
-    │   ├── ParticleSystem.js    # GPU instanced particles for neutrinos + fission bursts
-    │   ├── CurlNoiseField.js    # fake fluid motion for trails/smoke
+    │   ├── ParticleSystem.js    # instanced particles for neutrons + fission bursts
+    │   ├── CurlNoiseField.js    # fake fluid motion for trails
     │   ├── HitStop.js           # anime-style freeze-frame + flash on impact
     │   └── shaders/
-    │       ├── fission.vert.glsl
-    │       ├── fission.frag.glsl
-    │       ├── trail.vert.glsl
-    │       └── trail.frag.glsl
     ├── ui/
-    │   ├── RadialMenu.js        # isotope picker that appears near the tracked hand
-    │   └── HUD.js               # reaction stats: neutrons live, energy released, cascade depth
+    │   ├── RadialMenu.js        # isotope picker (future: multi-isotope selection)
+    │   └── HUD.js               # live cascade stats
     └── utils/
         └── MathUtils.js
-```
+\`\`\`
 
 ## Getting started
 
-```bash
-npm create vite@latest . -- --template vanilla
-npm install three @mediapipe/tasks-vision
+\`\`\`bash
+npm install
 npm run dev
-```
+\`\`\`
 
-Then drop the files from this scaffold into place (they're written to match the structure above — `main.js` is the one file you MUST wire up first since everything else is a module it imports).
+Open the printed `localhost` URL, allow webcam access, and make a fist to bombard
+the uranium cluster.
 
-## Build order (suggested, matches the weekend plan)
+## Current scope (v1)
 
-1. `SceneManager.js` + `main.js` — get a Three.js scene rendering atoms in a lattice, camera orbit, sanity check.
-2. `HandTracker.js` + `GestureController.js` — webcam feed in, pinch/throw gestures out as events.
-3. `RadialMenu.js` — pick an isotope near the hand.
-4. `ChainReaction.js` + `IsotopeData.js` — the sim core, headless, testable without any rendering.
-5. `ParticleSystem.js` + shaders — visualize neutrinos flying + fission bursts.
-6. `HitStop.js` + `CurlNoiseField.js` — polish pass, this is what makes it feel "anime."
-7. `HUD.js` — cascade depth / energy counter, ties it together.
-8. Deploy (Vercel or HF Spaces static build — webcam access needs HTTPS, both give you that for free).
+Uranium-235 only, single cluster, fist-to-bombard as the core interaction. Isotope
+switching (Pu-239, Th-232, U-238) is already stubbed in `IsotopeData.js` and the
+radial menu — next step is wiring pinch-selection to actually swap which isotope
+gets spawned when you rebuild the cluster.
 
 ## Design notes
 
-- **Chain reaction is a branching graph, not a physics engine.** Each atom has a `fissionProbability`. When a neutron hits it, roll against that probability; on success it "fissions," releases energy, and emits N new neutrons (isotope-dependent) toward random nearby atoms. This gives you exponential/cascading visuals with almost no math.
-- **Fluid look is curl noise, not Navier-Stokes.** `CurlNoiseField.js` gives you a divergence-free vector field cheaply — advect particles through it for smoke/energy-trail motion that never looks like it's flying in straight lines.
-- **Anime feel comes from timing, not geometry.** `HitStop.js` (freeze 2-3 frames + white flash on impact) buys more perceived impact than any amount of shader complexity. Don't skip it, don't over-invest elsewhere before it's in.
+- **Chain reaction is a branching graph, not a physics engine.** Each atom has a
+  `fissionProbability`. A neutron hit rolls against it; success releases energy and
+  emits N new neutrons toward random neighbors. Exponential cascades, near-zero math.
+- **Fluid look is curl noise, not Navier-Stokes.** Cheap divergence-free vector field,
+  advect particles through it for trail motion that never looks like it's flying straight.
+- **Anime feel comes from timing.** `HitStop.js` (freeze 2-3 frames + white flash on
+  fission) buys more perceived impact than shader complexity ever will.
+
+## Roadmap
+
+- [ ] Wire radial menu selection to isotope-swap on cluster rebuild
+- [ ] Add Pu-239, Th-232, U-238 clusters as selectable targets
+- [ ] Camera orbit controls (currently fixed slow auto-rotate)
+- [ ] Deploy to Vercel or HF Spaces (webcam needs HTTPS — both provide it free)

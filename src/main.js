@@ -24,23 +24,16 @@ const hud = new HUD(hudEl);
 const gestures = new GestureController();
 
 particles.attachTo(chainReaction, hitStop);
-
-// Keep the scene mesh in sync with the sim when an atom fissions (hide it, since
-// the ParticleSystem's burst is what visually "replaces" it).
 chainReaction.on('atom_fissioned', ({ atomId }) => sceneManager.killAtomVisual(atomId));
 
 // --- Build the initial cluster ---
-// Two isotope pockets so cascades can visually cross between "reactive" and "inert" zones.
-sceneManager.buildAtomCluster(chainReaction, 'U235', 60, { radius: 5, color: ISOTOPES.U235.color });
-sceneManager.buildAtomCluster(chainReaction, 'U238', 40, { radius: 8, color: ISOTOPES.U238.color });
+// Uranium-only for v1: one isotope, one fission probability, easier to tune and read.
+// Bump the count once bombardment feels good — 80 gives you a satisfying cascade
+// without tanking frame rate.
+sceneManager.buildAtomCluster(chainReaction, 'U235', 80, { radius: 6, color: ISOTOPES.U235.color });
 chainReaction.buildNeighborGraph();
 
 // --- Gesture wiring ---
-// PINCH_START opens the radial menu at the hand position; while pinched, dragging
-// the hand selects the nearest isotope; PINCH_END confirms the selection.
-// THROW (a fast hand motion) raycasts from the hand's screen position and strikes
-// whatever atom it lands on, using whatever isotope was last selected as context
-// (isotope selection determines which cluster you're "aiming with" — see note below).
 let pinching = false;
 
 gestures.on(GESTURES.PINCH_START, ({ position }) => {
@@ -61,11 +54,14 @@ gestures.on(GESTURES.PINCH_END, ({ position }) => {
 });
 
 gestures.on(GESTURES.THROW, ({ origin }) => {
-  // origin is already in NDC space via GestureController's normToScreen()
   const atomId = sceneManager.raycastAtom(origin.x, origin.y);
-  if (atomId !== null) {
-    chainReaction.strikeAtom(atomId);
-  }
+  if (atomId !== null) chainReaction.strikeAtom(atomId);
+});
+
+// FIST = bombard. intensity (0.4–3, from punch speed) scales how many neutrons hit at once.
+gestures.on(GESTURES.FIST, ({ intensity }) => {
+  const count = Math.round(5 * intensity);
+  chainReaction.bombardAtoms(count);
 });
 
 // --- Hand tracking bootstrap ---
@@ -77,20 +73,26 @@ async function initTracking() {
     await handTracker.init();
     await handTracker.startWebcam();
   } catch (err) {
-    console.warn('[Promethean] Webcam/hand tracking unavailable, falling back to mouse control.', err);
-    initMouseFallback();
+    console.warn('[Promethean] Webcam/hand tracking unavailable, falling back to mouse/keyboard.', err);
+    initFallbackControls();
   }
 }
 
-// Mouse fallback so you can test the sim/VFX loop without a webcam handy —
-// click an atom to strike it directly. Useful for the Day 1 "does the cascade
-// even work" sanity check before hand tracking is wired in.
-function initMouseFallback() {
+// Fallback controls so you can test without a webcam:
+//   click an atom  -> strike it
+//   spacebar       -> bombard (same as a fist punch)
+function initFallbackControls() {
   window.addEventListener('click', (e) => {
     const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
     const ndcY = -(e.clientY / window.innerHeight) * 2 + 1;
     const atomId = sceneManager.raycastAtom(ndcX, ndcY);
     if (atomId !== null) chainReaction.strikeAtom(atomId);
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      chainReaction.bombardAtoms(6);
+    }
   });
 }
 
@@ -101,7 +103,7 @@ let lastTime = performance.now();
 function animate() {
   requestAnimationFrame(animate);
   const now = performance.now();
-  const dt = Math.min((now - lastTime) / 1000, 1 / 30); // clamp dt to avoid huge steps on tab-switch
+  const dt = Math.min((now - lastTime) / 1000, 1 / 30);
   lastTime = now;
 
   handTracker.tick();
@@ -113,7 +115,7 @@ function animate() {
   particles.update(dt);
   hud.update(chainReaction.stats);
 
-  sceneManager.scene.rotation.y += dt * 0.05; // slow ambient rotation, remove once camera orbit controls are added
+  sceneManager.scene.rotation.y += dt * 0.05;
   sceneManager.render();
 }
 animate();
