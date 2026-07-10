@@ -7,20 +7,31 @@
   <style>
     html, body { margin: 0; padding: 0; overflow: hidden; background: #05050a; height: 100%; }
     #scene-canvas { position: fixed; inset: 0; z-index: 1; }
+
+    #clap-zones { position: fixed; inset: 0; z-index: 2; pointer-events: none;
+                  display: flex; flex-direction: column; }
+    .clap-zone { flex: 1; display: flex; align-items: center; justify-content: flex-end;
+                 padding-right: 14px; border-top: 1px dashed rgba(255,255,255,0.06); }
+    .clap-zone.high { border-top: none; }
+    .clap-zone span { font-family: monospace; font-size: 11px; color: rgba(255,255,255,0.28); }
+
     #webcam-video { position: fixed; bottom: 16px; right: 16px; width: 220px; border-radius: 8px;
-                     opacity: 0.6; transform: scaleX(-1); z-index: 2; pointer-events: none; }
+                     opacity: 0.6; transform: scaleX(-1); z-index: 3; pointer-events: none; }
     #debug-canvas { position: fixed; bottom: 16px; right: 16px; width: 220px; height: 165px;
-                     border-radius: 8px; z-index: 3; pointer-events: none; }
+                     border-radius: 8px; z-index: 4; pointer-events: none; }
     #hud { position: fixed; top: 16px; left: 16px; color: #d7d7ff; font-family: monospace;
-           font-size: 12px; z-index: 3; pointer-events: none; }
-    #gesture-debug { position: fixed; bottom: 16px; left: 16px; color: #6cf7ff; font-family: monospace;
-                      font-size: 12px; z-index: 3; pointer-events: none; text-align: left;
+           font-size: 12px; z-index: 4; pointer-events: none; }
+    #isotope-legend { position: fixed; bottom: 16px; left: 16px; color: #9fa8da; font-family: monospace;
+                        font-size: 11px; z-index: 4; pointer-events: none; line-height: 1.6;
+                        background: rgba(0,0,0,0.35); padding: 8px 10px; border-radius: 6px; }
+    #gesture-debug { position: fixed; top: 16px; right: 16px; color: #6cf7ff; font-family: monospace;
+                      font-size: 12px; z-index: 4; pointer-events: none; text-align: right;
                       background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; }
     #flash-overlay { position: fixed; inset: 0; background: white; opacity: 0; pointer-events: none; z-index: 10; }
 
     #isotope-panel {
       position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
-      min-width: 260px; text-align: center; z-index: 4; pointer-events: none;
+      min-width: 260px; text-align: center; z-index: 5; pointer-events: none;
       background: rgba(10,10,20,0.6); border: 1px solid rgba(255,255,255,0.15);
       border-radius: 10px; padding: 10px 20px; font-family: monospace; color: #d7d7ff;
     }
@@ -32,16 +43,42 @@
       100% { box-shadow: 0 0 0px rgba(255,255,255,0);   border-color: rgba(255,255,255,0.15); }
     }
     .confirm-pulse { animation: confirmPulse 0.5s ease-out; }
+
+    #status-overlay {
+      position: fixed; inset: 0; z-index: 20; display: none; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px;
+      background: rgba(5,5,10,0.94); color: #d7d7ff; font-family: monospace;
+      text-align: center; padding: 24px;
+    }
+    .status-spinner { width: 42px; height: 42px; border-radius: 50%;
+                        border: 3px solid rgba(108,247,255,0.2); border-top-color: #6cf7ff;
+                        animation: statusSpin 0.9s linear infinite; }
+    @keyframes statusSpin { to { transform: rotate(360deg); } }
+    .status-message { font-size: 14px; max-width: 420px; line-height: 1.5; }
+    .status-error { color: #ff8c8c; }
+    .status-retry { cursor: pointer; background: #6cf7ff; color: #05050a; border: none;
+                     padding: 10px 22px; border-radius: 6px; font-family: monospace;
+                     font-weight: bold; font-size: 13px; }
   </style>
 </head>
 <body>
   <canvas id="scene-canvas"></canvas>
+  <div id="clap-zones">
+    <div class="clap-zone high"><span>HIGH · 50 neutrons</span></div>
+    <div class="clap-zone med"><span>MED · 20 neutrons</span></div>
+    <div class="clap-zone low"><span>LOW · 5 neutrons</span></div>
+  </div>
   <video id="webcam-video" autoplay playsinline muted></video>
   <canvas id="debug-canvas" width="220" height="165"></canvas>
   <div id="hud"></div>
   <div id="isotope-panel"></div>
+  <div id="isotope-legend">
+    ☝️ U-235 &nbsp; ✌️ Th-232 &nbsp; 🤟 Pu-239<br/>
+    🖖 U-238 &nbsp; 🖐️ Cf-252 &nbsp;·&nbsp; 👏 clap height = LOW/MED/HIGH
+  </div>
   <div id="gesture-debug">waiting for hand tracker…</div>
   <div id="flash-overlay"></div>
+  <div id="status-overlay"></div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
