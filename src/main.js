@@ -11,7 +11,9 @@ import { HUD } from './ui/HUD.js';
 // --- DOM refs ---
 const canvas = document.getElementById('scene-canvas');
 const video = document.getElementById('webcam-video');
+const debugCanvas = document.getElementById('debug-canvas');
 const hudEl = document.getElementById('hud');
+const gestureDebugEl = document.getElementById('gesture-debug');
 const flashEl = document.getElementById('flash-overlay');
 
 // --- Core systems ---
@@ -26,12 +28,23 @@ const gestures = new GestureController();
 particles.attachTo(chainReaction, hitStop);
 chainReaction.on('atom_fissioned', ({ atomId }) => sceneManager.killAtomVisual(atomId));
 
-// --- Build the initial cluster ---
-// Uranium-only for v1: one isotope, one fission probability, easier to tune and read.
-// Bump the count once bombardment feels good — 80 gives you a satisfying cascade
-// without tanking frame rate.
+// --- Build the initial cluster (uranium-only for v1) ---
 sceneManager.buildAtomCluster(chainReaction, 'U235', 80, { radius: 6, color: ISOTOPES.U235.color });
 chainReaction.buildNeighborGraph();
+
+// --- Live gesture debug readout — watch these numbers to tune thresholds in GestureController.js ---
+gestures.on(GESTURES.DEBUG, (d) => {
+  if (!d.handVisible) {
+    gestureDebugEl.textContent = 'NO HAND VISIBLE';
+    return;
+  }
+  gestureDebugEl.innerHTML = `
+    pinch: ${d.pinchDist} (fires < 0.40)<br/>
+    tipRatio: ${d.avgTipRatio} (fist < 0.65, open > 1.30)<br/>
+    speed: ${d.speed}<br/>
+    state: ${d.isFist ? 'FIST' : d.isPinching ? 'PINCH' : d.isOpenPalm ? 'OPEN' : 'neutral'}
+  `;
+});
 
 // --- Gesture wiring ---
 let pinching = false;
@@ -58,29 +71,27 @@ gestures.on(GESTURES.THROW, ({ origin }) => {
   if (atomId !== null) chainReaction.strikeAtom(atomId);
 });
 
-// FIST = bombard. intensity (0.4–3, from punch speed) scales how many neutrons hit at once.
 gestures.on(GESTURES.FIST, ({ intensity }) => {
   const count = Math.round(5 * intensity);
   chainReaction.bombardAtoms(count);
 });
 
 // --- Hand tracking bootstrap ---
-const handTracker = new HandTracker(video);
+const handTracker = new HandTracker(video, debugCanvas);
 handTracker.onResults((results) => gestures.update(results));
 
 async function initTracking() {
   try {
     await handTracker.init();
     await handTracker.startWebcam();
+    gestureDebugEl.textContent = 'tracker ready, show your hand';
   } catch (err) {
-    console.warn('[Promethean] Webcam/hand tracking unavailable, falling back to mouse/keyboard.', err);
+    console.error('[Promethean] Webcam/hand tracking unavailable, falling back to mouse/keyboard.', err);
+    gestureDebugEl.textContent = `tracker failed: ${err.message} — using mouse/spacebar fallback`;
     initFallbackControls();
   }
 }
 
-// Fallback controls so you can test without a webcam:
-//   click an atom  -> strike it
-//   spacebar       -> bombard (same as a fist punch)
 function initFallbackControls() {
   window.addEventListener('click', (e) => {
     const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
