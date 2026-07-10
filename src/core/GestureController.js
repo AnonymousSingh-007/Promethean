@@ -1,39 +1,47 @@
-// Turns raw 21-point hand landmarks into semantic gestures:
-//   - PINCH       : thumb tip + index tip close together -> "select" (open radial menu / pick isotope)
-//   - OPEN_PALM   : all fingers extended -> "arm" state, shown as a HUD hint
-//   - THROW       : rapid forward velocity while pinch releases -> fire single neutron
-//   - FIST        : all fingertips curled toward wrist -> bombard the cluster with a
-//                    burst of neutrons at once (this is the "let it rip" gesture)
+// Two gestures, both chosen to be easy to get right on the first try:
 //
-// MediaPipe landmark indices (per hand), the ones we actually use:
-//   0 = wrist, 4 = thumb tip, 8 = index tip, 12 = middle tip, 16 = ring tip, 20 = pinky tip
+//   FINGER COUNT (one hand, held up): selects an isotope.
+//     1 finger  -> Uranium-235
+//     2 fingers -> Thorium-232
+//     3 fingers -> Plutonium-239
+//     4 fingers -> Uranium-238
+//     (thumb is deliberately ignored — thumb extension detection is unreliable
+//      and hand-orientation-dependent; counting only index/middle/ring/pinky
+//      is far more consistent across webcams and lighting.)
+//
+//   CLAP (two hands brought together): launches a neutron bombardment at
+//     whatever isotope is currently selected.
+//
+// Both use DISTANCE RATIOS relative to each hand's own palm size, not raw
+// normalized coordinates — this is what makes them work at any distance from
+// the camera, unlike the old fixed-threshold pinch/fist detection.
 
-const LM = { WRIST: 0, THUMB_TIP: 4, INDEX_TIP: 8, MIDDLE_TIP: 12, RING_TIP: 16, PINKY_TIP: 20 };
+const FINGER_TIP_PIP = [
+  { tip: 8, pip: 6 },   // index
+  { tip: 12, pip: 10 }, // middle
+  { tip: 16, pip: 14 }, // ring
+  { tip: 20, pip: 18 }, // pinky
+];
 
-const PINCH_THRESHOLD = 0.06;         // normalized distance, tune against your webcam/lighting
-const OPEN_PALM_THRESHOLD = 0.18;     // fingertip-to-wrist distance above this = extended
-const FIST_THRESHOLD = 0.11;          // fingertip-to-wrist distance below this = curled
-const THROW_VELOCITY_THRESHOLD = 0.9; // normalized units/sec
-const VELOCITY_SMOOTHING = 0.6;
+const EXTENDED_RATIO = 1.15;    // tip must be this many times farther from wrist than pip to count as "extended"
+const CLAP_DISTANCE_RATIO = 2.2; // wrist-to-wrist distance, in units of avg palm size, below which hands count as "clapped"
+const CLAP_COOLDOWN = 0.45;      // seconds — prevents one clap re-firing repeatedly while hands linger close together
 
 export const GESTURES = {
-  PINCH_START: 'pinch_start',
-  PINCH_END: 'pinch_end',
-  OPEN_PALM: 'open_palm',
-  THROW: 'throw',
-  FIST: 'fist',
+  ISOTOPE_SELECTED: 'isotope_selected', // { fingerCount }
+  CLAP: 'clap',                          // { position }
+  HANDS_UPDATE: 'hands_update',          // continuous, for debug HUD only — not logged to terminal
+  HAND_FOUND: 'hand_found',
   HAND_LOST: 'hand_lost',
 };
 
 export class GestureController {
   constructor() {
     this.listeners = {};
-    this._wasPinching = false;
-    this._wasFist = false;
-    this._prevWrist = null;
-    this._prevTime = null;
-    this._smoothedVelocity = { x: 0, y: 0, z: 0 };
-    this._hadHand = false;
+    this._lastFingerCount = null;
+    this._lastClapTime = -999;
+    this._wasHandsClose = false;
+    this._prevHandCount = 0;
   }
 
   on(event, cb) {
@@ -45,104 +53,77 @@ export class GestureController {
     (this.listeners[event] || []).forEach(fn => fn(payload));
   }
 
-  /** Feed this directly from HandTracker's onResults callback. */
-  update({ landmarks }) {
+  /** Feed this directly from HandTracker's onResults callback — pass `results.landmarks`. */
+  update(landmarksList) {
     const now = performance.now() / 1000;
+    const handCount = landmarksList.length;
 
-    if (!landmarks.length) {
-      if (this._hadHand) this._emit(GESTURES.HAND_LOST, {});
-      this._hadHand = false;
-      this._wasPinching = false;
-      this._wasFist = false;
-      this._prevWrist = null;
+    if (handCount > 0 && this._prevHandCount === 0) this._emit(GESTURES.HAND_FOUND, { handCount });
+    if (handCount === 0 && this._prevHandCount > 0) this._emit(GESTURES.HAND_LOST, {});
+    this._prevHandCount = handCount;
+
+    if (handCount === 0) {
+      this._wasHandsClose = false;
+      this._emit(GESTURES.HANDS_UPDATE, { handCount: 0, counts: [], selectedFingerCount: this._lastFingerCount });
       return;
     }
-    this._hadHand = true;
 
-    const hand = landmarks[0];
-    const thumb = hand[LM.THUMB_TIP];
-    const index = hand[LM.INDEX_TIP];
-    const wrist = hand[LM.WRIST];
+    const handsInfo = landmarksList.map((hand) => {
+      const wrist = hand[0];
+      const middleMcp = hand[9];
+      const palmSize = Math.max(dist3(wrist, middleMcp), 0.001);
+      const count = countExtendedFingers(hand, wrist);
+      return { hand, wrist, palmSize, count };
+    });
 
-    // --- Velocity (needed by both THROW and FIST punch-intensity) ---
-    let speed = 0;
-    if (this._prevWrist && this._prevTime) {
-      const dt = Math.max(now - this._prevTime, 1 / 120);
-      const vRaw = {
-        x: (wrist.x - this._prevWrist.x) / dt,
-        y: (wrist.y - this._prevWrist.y) / dt,
-        z: (wrist.z - this._prevWrist.z) / dt,
-      };
-      this._smoothedVelocity = {
-        x: lerp(this._smoothedVelocity.x, vRaw.x, VELOCITY_SMOOTHING),
-        y: lerp(this._smoothedVelocity.y, vRaw.y, VELOCITY_SMOOTHING),
-        z: lerp(this._smoothedVelocity.z, vRaw.z, VELOCITY_SMOOTHING),
-      };
-      speed = Math.hypot(this._smoothedVelocity.x, this._smoothedVelocity.y, this._smoothedVelocity.z);
+    // Primary hand (first in the list) drives isotope selection.
+    const primary = handsInfo[0];
+    if (primary.count >= 1 && primary.count <= 4 && primary.count !== this._lastFingerCount) {
+      this._lastFingerCount = primary.count;
+      this._emit(GESTURES.ISOTOPE_SELECTED, { fingerCount: primary.count });
     }
 
-    // --- Pinch detection ---
-    const pinchDist = dist3(thumb, index);
-    const isPinching = pinchDist < PINCH_THRESHOLD;
+    // Clap needs two hands present.
+    let clapDistance = null;
+    if (handsInfo.length >= 2) {
+      const [a, b] = handsInfo;
+      const avgPalm = (a.palmSize + b.palmSize) / 2;
+      clapDistance = dist3(a.wrist, b.wrist) / avgPalm;
+      const isClose = clapDistance < CLAP_DISTANCE_RATIO;
 
-    // --- Fist detection: all four fingertips curled close to the wrist ---
-    const tipDistances = [LM.INDEX_TIP, LM.MIDDLE_TIP, LM.RING_TIP, LM.PINKY_TIP].map(i => dist3(hand[i], wrist));
-    const avgTipDist = tipDistances.reduce((a, b) => a + b, 0) / tipDistances.length;
-    const isFist = avgTipDist < FIST_THRESHOLD;
-
-    // --- Open palm: all tips extended, and not currently a fist/pinch ---
-    const isOpenPalm = tipDistances.every(d => d > OPEN_PALM_THRESHOLD) && !isPinching && !isFist;
-
-    // Fist takes priority over pinch (a closing fist naturally passes through pinch-like
-    // distances) — only treat it as a pinch if it's NOT also curling into a fist.
-    if (isFist && !this._wasFist) {
-      // intensity scales the bombardment size — a fast punch unleashes more neutrons
-      const intensity = clamp(speed / THROW_VELOCITY_THRESHOLD, 0.4, 3);
-      this._emit(GESTURES.FIST, { position: normToScreen(wrist), intensity });
-    }
-
-    if (!isFist) {
-      if (isPinching && !this._wasPinching) {
-        this._emit(GESTURES.PINCH_START, { position: normToScreen(index) });
-      } else if (!isPinching && this._wasPinching) {
-        this._emit(GESTURES.PINCH_END, { position: normToScreen(index) });
+      if (isClose && !this._wasHandsClose && (now - this._lastClapTime) > CLAP_COOLDOWN) {
+        this._lastClapTime = now;
+        const midpoint = { x: (a.wrist.x + b.wrist.x) / 2, y: (a.wrist.y + b.wrist.y) / 2 };
+        this._emit(GESTURES.CLAP, { position: normToScreen(midpoint) });
       }
+      this._wasHandsClose = isClose;
+    } else {
+      this._wasHandsClose = false;
     }
 
-    if (isOpenPalm) {
-      this._emit(GESTURES.OPEN_PALM, { position: normToScreen(wrist) });
-    }
-
-    // --- Throw: fast wrist motion while releasing a pinch (single targeted neutron) ---
-    if (speed > THROW_VELOCITY_THRESHOLD && this._wasPinching && !isFist) {
-      this._emit(GESTURES.THROW, {
-        origin: normToScreen(index),
-        direction: { x: this._smoothedVelocity.x, y: -this._smoothedVelocity.y },
-        speed,
-      });
-    }
-
-    this._prevWrist = wrist;
-    this._prevTime = now;
-    this._wasPinching = isPinching && !isFist;
-    this._wasFist = isFist;
+    this._emit(GESTURES.HANDS_UPDATE, {
+      handCount,
+      counts: handsInfo.map(h => h.count),
+      selectedFingerCount: this._lastFingerCount,
+      clapDistance: clapDistance !== null ? clapDistance.toFixed(2) : null,
+    });
   }
+}
+
+function countExtendedFingers(hand, wrist) {
+  let count = 0;
+  for (const f of FINGER_TIP_PIP) {
+    const dTip = dist3(wrist, hand[f.tip]);
+    const dPip = dist3(wrist, hand[f.pip]);
+    if (dTip > dPip * EXTENDED_RATIO) count++;
+  }
+  return count;
 }
 
 function dist3(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
 
-function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
-function clamp(v, min, max) {
-  return Math.min(max, Math.max(min, v));
-}
-
-// MediaPipe landmarks are normalized [0,1] with origin top-left, mirrored vs. a selfie-view webcam.
-// Convert to NDC [-1, 1] for Three.js raycasting, flipping X for the mirror.
 function normToScreen(point) {
   return { x: -(point.x * 2 - 1), y: -(point.y * 2 - 1) };
 }

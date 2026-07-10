@@ -2,14 +2,14 @@
 
 # ⚛️ Promethean
 
-**Hand-tracked neutron bombardment → live simulated fission chain reactions**
+**Finger-count isotope selection → two-hand clap → live simulated fission chain reactions**
 
-Punch to trigger a cascade. Built with computer vision, WebGL shaders, and a physics-flavored simulation core.
+Hold up fingers to choose an isotope. Clap to bombard it. Watch the cascade.
 
 ![status](https://img.shields.io/badge/status-active%20development-orange)
 ![stack](https://img.shields.io/badge/stack-Three.js%20%7C%20MediaPipe%20%7C%20Vite-6cf7ff)
 ![license](https://img.shields.io/badge/license-MIT-blueviolet)
-![isotope](https://img.shields.io/badge/isotope-U--235-7CFC9C)
+![isotopes](https://img.shields.io/badge/isotopes-U--235%20%7C%20Th--232%20%7C%20Pu--239%20%7C%20U--238-7CFC9C)
 ![made by](https://img.shields.io/badge/made%20by-Samratth-ff6c6c)
 
 </div>
@@ -18,64 +18,85 @@ Punch to trigger a cascade. Built with computer vision, WebGL shaders, and a phy
 
 ## What is this
 
-A uranium-235 cluster rendered in 3D, controlled entirely by your webcam-tracked hand.
-Make a fist and neutrons launch from your hand toward the cluster — each hit has a
-chance to fission the atom, releasing more neutrons that hit neighboring atoms,
-cascading into a chain reaction. Every fission triggers an anime-style hit-stop
-(freeze-frame + flash) and a GPU particle burst, with neutron trails advected
-through a curl-noise field so they drift like something fluid rather than flying
-in dead-straight lines.
+Four isotope clusters — Uranium-235, Thorium-232, Plutonium-239, Uranium-238 —
+rendered as glowing Bohr-model atoms in 3D space, controlled entirely by
+webcam-tracked hands. Hold up 1-4 fingers to select which isotope you're
+targeting, then clap your hands together to launch a burst of neutrons at it.
+Each hit has a chance to fission the atom — probability and neutron yield vary
+by isotope — releasing more neutrons that hit neighboring atoms in the same
+cluster, cascading into a chain reaction. Every fission triggers an anime-style
+hit-stop (freeze-frame + flash) and a GPU particle burst, with neutron trails
+advected through a curl-noise field so they drift like something fluid instead
+of flying in dead-straight lines.
 
 ## Controls
 
-| Gesture                | Action                                                        |
-|-------------------------|----------------------------------------------------------------|
-| **Fist (closed hand)**   | **Bombard the cluster** — fires a burst of neutrons from your hand's 3D position, punch speed scales burst size |
-| Pinch (thumb + index)    | Open radial isotope menu at hand position                      |
-| Release pinch            | Confirm isotope selection                                      |
-| Fast hand throw           | Fire a single neutron at whatever atom you're pointing at      |
+| Gesture                         | Action                                                    |
+|-----------------------------------|--------------------------------------------------------------|
+| ☝️ **1 finger held up**            | Select **Uranium-235**                                      |
+| ✌️ **2 fingers held up**            | Select **Thorium-232**                                      |
+| 🤟 **3 fingers held up**            | Select **Plutonium-239**                                    |
+| 🖖 **4 fingers held up**            | Select **Uranium-238**                                      |
+| 👏 **Clap (bring both hands together)** | **Fire a neutron burst** at whichever isotope is currently selected |
 
-No webcam, or tracking being uncooperative? Fallback controls kick in automatically:
-- **Click** an atom to strike it
-- **Spacebar** to bombard (same as a fist)
+Finger counting deliberately ignores the thumb — thumb-extension detection is
+unreliable and orientation-dependent, so only index/middle/ring/pinky are
+counted. This keeps selection consistent across webcams and lighting.
 
-A live debug overlay (bottom-right skeleton view + top-right numeric readout) shows
-exactly what the hand tracker sees, so gesture tuning isn't guesswork.
+No webcam, or tracking being uncooperative? Keyboard fallback kicks in automatically:
+- **1 / 2 / 3 / 4** — select isotope
+- **Spacebar** — clap (bombard the selected isotope)
+
+A live debug overlay (bottom-right hand skeleton + top-right numeric readout)
+shows exactly what the tracker sees — finger counts per hand, live clap
+distance, hand count — so gesture tuning is never guesswork.
+
+## Terminal gesture logging
+
+Every meaningful gesture event (isotope selection, claps, hands
+found/lost) prints directly into the terminal running `npm run dev`:
+[gesture] +1042ms  isotope_selected { fingerCount: 2, isotopeId: 'Th232' }
+[gesture] +3310ms  clap { isotopeId: 'Th232', neutronsFired: 6 }
+
+This is **temporary, in-memory only** — nothing is written to disk, and it
+resets when you restart the dev server. It exists purely to let you compare
+gesture behavior across takes while tuning thresholds. The same log is also
+mirrored to `window.__gestureLog` in the browser console if you want to
+inspect it there instead.
 
 ## Stack
 
-- **Vite** — dev server / bundler
+- **Vite** — dev server / bundler (also hosts the dev-only terminal logging endpoint)
 - **Three.js** — 3D scene, custom GLSL shader materials, GPU particle systems
-- **MediaPipe Tasks Vision (HandLandmarker)** — client-side webcam hand tracking, scale-normalized gesture detection
+- **MediaPipe Tasks Vision (HandLandmarker)** — client-side, two-hand tracking, scale-normalized gesture detection
 - Vanilla JS, no framework
 
 ## Folder structure
-
 promethean/
 ├── index.html
 ├── package.json
-├── vite.config.js
+├── vite.config.js              # includes the dev-only terminal gesture logger middleware
 ├── .gitignore
 ├── public/
-│   └── models/                 # MediaPipe .task model (fetched from CDN at runtime by default)
+│   └── models/
 └── src/
 ├── main.js                  # bootstraps everything, owns the render loop
 ├── core/
-│   ├── HandTracker.js        # MediaPipe wrapper + debug skeleton overlay
-│   ├── GestureController.js  # scale-normalized pinch / open-palm / throw / fist detection
-│   └── SceneManager.js       # Three.js scene, Bohr-style atom visuals, raycasting
+│   ├── HandTracker.js        # MediaPipe wrapper, 2-hand tracking, debug skeleton overlay
+│   ├── GestureController.js  # finger-count isotope selection + clap detection
+│   └── GestureLogger.js      # temporary in-memory + terminal gesture logging
+│   └── SceneManager.js       # Three.js scene, 4 spatially separated isotope clusters
 ├── physics/
-│   ├── constants.js          # shared sim/VFX timing constants
-│   ├── IsotopeData.js        # isotope definitions (U-235 only for v1)
-│   └── ChainReaction.js      # the reaction sim — branching graph, no physics engine
+│   ├── constants.js
+│   ├── IsotopeData.js        # U-235, Th-232, Pu-239, U-238 + finger-count mapping
+│   └── ChainReaction.js      # branching-graph fission sim, per-isotope bombardment
 ├── vfx/
-│   ├── ParticleSystem.js     # instanced particles for neutron trails + fission bursts
-│   ├── CurlNoiseField.js     # fake fluid motion (divergence-free noise field)
-│   ├── HitStop.js            # anime-style freeze-frame + flash on impact
+│   ├── ParticleSystem.js
+│   ├── CurlNoiseField.js
+│   ├── HitStop.js
 │   └── shaders/
 ├── ui/
-│   ├── RadialMenu.js         # isotope picker (future: multi-isotope selection)
-│   └── HUD.js                # live cascade stats
+│   └── HUD.js                 # selected isotope, hand count, live cascade stats
 └── utils/
 └── MathUtils.js
 
@@ -86,32 +107,32 @@ npm install
 npm run dev
 ```
 
-Open the printed `localhost` URL, allow webcam access, and make a fist to bombard
-the uranium cluster.
+Open the printed `localhost` URL, allow webcam access, hold up 1-4 fingers to
+pick an isotope, then clap.
 
 ## How the sim actually works
 
 The chain reaction is a **probability-weighted branching graph**, not a physics
-engine. Each atom has a `fissionProbability`. A neutron hit rolls against it;
-success releases energy and emits 2–4 new neutrons toward random alive neighbors.
-That's the entire reactor core — exponential cascades from a few lines of logic,
-no numerical solvers required.
+engine. Each atom has a `fissionProbability` and a neutron yield range specific
+to its isotope. A neutron hit rolls against that probability; success releases
+energy and emits new neutrons toward random alive neighbors **within the same
+cluster** (clusters are spatially separated so cascades never jump isotopes).
+Exponential cascades from a few lines of logic, no numerical solvers required.
 
-The "fluid" look on neutron trails is **curl noise**, not Navier-Stokes — a cheap
-divergence-free vector field that particles get advected through, so trails drift
-like smoke instead of flying in straight lines.
+The "fluid" look on neutron trails is **curl noise**, not Navier-Stokes — a
+cheap divergence-free vector field particles get advected through.
 
-The **anime feel** comes almost entirely from `HitStop.js`: a 40–130ms freeze-frame
-plus a white screen flash, scaled by fission energy. It buys more perceived impact
-than any amount of shader complexity.
+The anime feel comes almost entirely from `HitStop.js`: a 40–130ms freeze-frame
+plus a white screen flash, scaled by fission energy.
 
 ## Roadmap
 
-- [x] Fist-to-bombard with visible neutron flight paths
-- [x] Scale-normalized gesture detection (works at any distance from camera)
-- [ ] Wire radial menu selection to isotope-swap on cluster rebuild
-- [ ] Add Pu-239, Th-232, U-238 as selectable isotope clusters
-- [ ] Camera orbit controls (currently fixed slow auto-rotate)
+- [x] Finger-count isotope selection (scale-normalized, works at any distance)
+- [x] Two-hand clap detection with cooldown
+- [x] Four spatially separated isotope clusters with isotope-accurate probabilities
+- [x] Temporary terminal gesture logging for take-to-take comparison
+- [ ] Visual highlight/label on the currently selected cluster
+- [ ] Camera orbit controls (currently fixed viewing angle)
 - [ ] Deploy to Vercel or HF Spaces (webcam needs HTTPS — both provide it free)
 
 ---

@@ -1,11 +1,11 @@
 import { SceneManager } from './core/SceneManager.js';
 import { HandTracker } from './core/HandTracker.js';
 import { GestureController, GESTURES } from './core/GestureController.js';
+import { GestureLogger } from './core/GestureLogger.js';
 import { ChainReaction } from './physics/ChainReaction.js';
-import { ISOTOPES } from './physics/IsotopeData.js';
+import { ISOTOPES, FINGER_COUNT_TO_ISOTOPE } from './physics/IsotopeData.js';
 import { ParticleSystem } from './vfx/ParticleSystem.js';
 import { HitStop } from './vfx/HitStop.js';
-import { RadialMenu } from './ui/RadialMenu.js';
 import { HUD } from './ui/HUD.js';
 
 // --- DOM refs ---
@@ -21,96 +21,84 @@ const sceneManager = new SceneManager(canvas);
 const chainReaction = new ChainReaction({ neighborRadius: 3.5, maxNeighbors: 6 });
 const particles = new ParticleSystem(sceneManager.scene);
 const hitStop = new HitStop(flashEl);
-const radialMenu = new RadialMenu(document.body);
 const hud = new HUD(hudEl);
 const gestures = new GestureController();
+const logger = new GestureLogger();
 
 particles.attachTo(chainReaction, hitStop);
 chainReaction.on('atom_fissioned', ({ atomId }) => sceneManager.killAtomVisual(atomId));
 
-// --- Build the initial cluster (uranium-only for v1) ---
-sceneManager.buildAtomCluster(chainReaction, 'U235', 80, { radius: 6, color: ISOTOPES.U235.color });
+// --- Build all four isotope clusters ---
+for (const isotopeId of Object.keys(ISOTOPES)) {
+  sceneManager.buildAtomCluster(chainReaction, isotopeId, 35, { radius: 3.2, color: ISOTOPES[isotopeId].color });
+}
 chainReaction.buildNeighborGraph();
 
-// --- Live gesture debug readout ---
-gestures.on(GESTURES.DEBUG, (d) => {
-  if (!d.handVisible) {
-    gestureDebugEl.textContent = 'NO HAND VISIBLE';
+// --- State ---
+let selectedIsotopeId = 'U235'; // default before any finger-count gesture is seen
+let lastHandsMeta = { handCount: 0 };
+
+// --- Gesture wiring ---
+gestures.on(GESTURES.ISOTOPE_SELECTED, ({ fingerCount }) => {
+  const isotopeId = FINGER_COUNT_TO_ISOTOPE[fingerCount];
+  if (!isotopeId) return;
+  selectedIsotopeId = isotopeId;
+  logger.log('isotope_selected', { fingerCount, isotopeId });
+});
+
+gestures.on(GESTURES.CLAP, ({ position }) => {
+  const worldOrigin = sceneManager.screenToWorldPoint(position.x, position.y, 20);
+  const hitCount = chainReaction.bombardIsotope(selectedIsotopeId, 6, worldOrigin);
+  logger.log('clap', { isotopeId: selectedIsotopeId, neutronsFired: hitCount });
+});
+
+gestures.on(GESTURES.HAND_FOUND, () => logger.log('hand_found', {}));
+gestures.on(GESTURES.HAND_LOST, () => logger.log('hand_lost', {}));
+
+gestures.on(GESTURES.HANDS_UPDATE, (meta) => {
+  lastHandsMeta = meta;
+  if (!meta.handCount) {
+    gestureDebugEl.textContent = 'NO HANDS VISIBLE';
     return;
   }
   gestureDebugEl.innerHTML = `
-    pinch: ${d.pinchDist} (fires < 0.40)<br/>
-    tipRatio: ${d.avgTipRatio} (fist < 0.65, open > 1.30)<br/>
-    speed: ${d.speed}<br/>
-    state: ${d.isFist ? 'FIST' : d.isPinching ? 'PINCH' : d.isOpenPalm ? 'OPEN' : 'neutral'}
+    hands: ${meta.handCount}<br/>
+    finger counts: ${meta.counts.join(', ')}<br/>
+    clap distance: ${meta.clapDistance ?? '—'} (fires < 2.20)<br/>
+    hold 1-4 fingers to select isotope
   `;
-});
-
-// --- Gesture wiring ---
-let pinching = false;
-
-gestures.on(GESTURES.PINCH_START, ({ position }) => {
-  pinching = true;
-  const screenX = (position.x * 0.5 + 0.5) * window.innerWidth;
-  const screenY = (-position.y * 0.5 + 0.5) * window.innerHeight;
-  radialMenu.showAt(screenX, screenY);
-});
-
-gestures.on(GESTURES.PINCH_END, ({ position }) => {
-  if (pinching) {
-    const screenX = (position.x * 0.5 + 0.5) * window.innerWidth;
-    const screenY = (-position.y * 0.5 + 0.5) * window.innerHeight;
-    radialMenu.selectNearest(screenX, screenY);
-  }
-  pinching = false;
-  radialMenu.hide();
-});
-
-gestures.on(GESTURES.THROW, ({ origin }) => {
-  const atomId = sceneManager.raycastAtom(origin.x, origin.y);
-  if (atomId !== null) {
-    const worldOrigin = sceneManager.screenToWorldPoint(origin.x, origin.y, 14);
-    chainReaction.strikeAtom(atomId, { origin: worldOrigin });
-  }
-});
-
-// FIST = bombard. Neutrons now visibly launch from your hand's 3D position toward the cluster.
-gestures.on(GESTURES.FIST, ({ position, intensity }) => {
-  const worldOrigin = sceneManager.screenToWorldPoint(position.x, position.y, 14);
-  const count = Math.round(5 * intensity);
-  chainReaction.bombardAtoms(count, worldOrigin);
 });
 
 // --- Hand tracking bootstrap ---
 const handTracker = new HandTracker(video, debugCanvas);
-handTracker.onResults((results) => gestures.update(results));
+handTracker.onResults((results) => gestures.update(results.landmarks));
 
 async function initTracking() {
   try {
     await handTracker.init();
     await handTracker.startWebcam();
-    gestureDebugEl.textContent = 'tracker ready, show your hand';
+    gestureDebugEl.textContent = 'tracker ready — hold up fingers, then clap';
   } catch (err) {
-    console.error('[Promethean] Webcam/hand tracking unavailable, falling back to mouse/keyboard.', err);
-    gestureDebugEl.textContent = `tracker failed: ${err.message} — using mouse/spacebar fallback`;
+    console.error('[Promethean] Webcam/hand tracking unavailable, falling back to keyboard.', err);
+    gestureDebugEl.textContent = `tracker failed: ${err.message} — using keyboard fallback`;
     initFallbackControls();
   }
 }
 
+// Keyboard fallback so you can test without a webcam:
+//   1-4       -> select isotope (matches finger count mapping)
+//   spacebar  -> clap (bombard the currently selected isotope)
 function initFallbackControls() {
-  window.addEventListener('click', (e) => {
-    const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
-    const ndcY = -(e.clientY / window.innerHeight) * 2 + 1;
-    const atomId = sceneManager.raycastAtom(ndcX, ndcY);
-    if (atomId !== null) {
-      const worldOrigin = sceneManager.screenToWorldPoint(ndcX, ndcY, 14);
-      chainReaction.strikeAtom(atomId, { origin: worldOrigin });
-    }
-  });
   window.addEventListener('keydown', (e) => {
+    if (['1', '2', '3', '4'].includes(e.key)) {
+      const isotopeId = FINGER_COUNT_TO_ISOTOPE[Number(e.key)];
+      selectedIsotopeId = isotopeId;
+      logger.log('isotope_selected', { fingerCount: Number(e.key), isotopeId, source: 'keyboard' });
+    }
     if (e.code === 'Space') {
       e.preventDefault();
-      chainReaction.bombardAtoms(6, { x: 0, y: 0, z: 14 });
+      const hitCount = chainReaction.bombardIsotope(selectedIsotopeId, 6, { x: 0, y: 0, z: 20 });
+      logger.log('clap', { isotopeId: selectedIsotopeId, neutronsFired: hitCount, source: 'keyboard' });
     }
   });
 }
@@ -135,9 +123,11 @@ function animate() {
   }
   particles.update(dt);
   sceneManager.updateAtoms(dt, elapsed);
-  hud.update(chainReaction.stats);
+  hud.update(chainReaction.stats, {
+    selectedIsotopeLabel: ISOTOPES[selectedIsotopeId].label,
+    handCount: lastHandsMeta.handCount,
+  });
 
-  sceneManager.scene.rotation.y += dt * 0.05;
   sceneManager.render();
 }
 animate();

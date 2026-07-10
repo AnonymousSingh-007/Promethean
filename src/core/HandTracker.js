@@ -1,14 +1,15 @@
 import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
-// Connections between landmark indices, used only for drawing the debug skeleton.
 const HAND_CONNECTIONS = [
-  [0,1],[1,2],[2,3],[3,4],           // thumb
-  [0,5],[5,6],[6,7],[7,8],           // index
-  [5,9],[9,10],[10,11],[11,12],      // middle
-  [9,13],[13,14],[14,15],[15,16],    // ring
-  [13,17],[17,18],[18,19],[19,20],   // pinky
-  [0,17],                             // palm base
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17],
 ];
+
+const HAND_COLORS = ['#6cf7ff', '#ffb86c']; // distinct color per hand slot in the debug overlay
 
 export class HandTracker {
   constructor(videoEl, debugCanvas = null) {
@@ -26,34 +27,25 @@ export class HandTracker {
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
     );
 
-    // Try GPU delegate first, fall back to CPU — GPU delegate silently fails
-    // on some laptops/drivers and leaves you with a tracker that never detects anything.
+    const options = {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+        delegate: 'GPU',
+      },
+      runningMode: 'VIDEO',
+      numHands: 2, // both hands — needed for finger-count selection + clap detection
+      minHandDetectionConfidence: 0.5,
+      minHandPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    };
+
     try {
-      this.landmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        numHands: 1,
-        minHandDetectionConfidence: 0.5,
-        minHandPresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
+      this.landmarker = await HandLandmarker.createFromOptions(vision, options);
       console.info('[Promethean] HandLandmarker ready (GPU delegate).');
     } catch (gpuErr) {
       console.warn('[Promethean] GPU delegate failed, falling back to CPU.', gpuErr);
-      this.landmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-          delegate: 'CPU',
-        },
-        runningMode: 'VIDEO',
-        numHands: 1,
-        minHandDetectionConfidence: 0.5,
-        minHandPresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
+      options.baseOptions.delegate = 'CPU';
+      this.landmarker = await HandLandmarker.createFromOptions(vision, options);
       console.info('[Promethean] HandLandmarker ready (CPU delegate).');
     }
   }
@@ -76,10 +68,9 @@ export class HandTracker {
     this._onResults = cb;
   }
 
-  /** Call once per animation frame. No-ops until init() + startWebcam() have resolved. */
   tick() {
     if (!this.running || !this.landmarker) return;
-    if (this.videoEl.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return; // video not actually delivering frames yet
+    if (this.videoEl.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
     if (this.videoEl.currentTime === this._lastVideoTime) return;
     this._lastVideoTime = this.videoEl.currentTime;
 
@@ -101,19 +92,19 @@ export class HandTracker {
     if (landmarksList.length === 0) {
       ctx.fillStyle = '#ff5c5c';
       ctx.font = '14px monospace';
-      ctx.fillText('NO HAND DETECTED', 10, 20);
+      ctx.fillText('NO HANDS DETECTED', 10, 20);
       return;
     }
 
     ctx.fillStyle = '#5cff8f';
     ctx.font = '14px monospace';
-    ctx.fillText('HAND DETECTED', 10, 20);
+    ctx.fillText(`${landmarksList.length} HAND${landmarksList.length > 1 ? 'S' : ''} DETECTED`, 10, 20);
 
-    for (const hand of landmarksList) {
-      // points are mirrored (selfie view) to match the CSS-mirrored video element
+    landmarksList.forEach((hand, handIdx) => {
+      const color = HAND_COLORS[handIdx % HAND_COLORS.length];
       const pts = hand.map(p => ({ x: (1 - p.x) * w, y: p.y * h }));
 
-      ctx.strokeStyle = '#6cf7ff';
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       for (const [a, b] of HAND_CONNECTIONS) {
         ctx.beginPath();
@@ -128,6 +119,6 @@ export class HandTracker {
         ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
         ctx.fill();
       }
-    }
+    });
   }
 }
