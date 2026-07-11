@@ -8,13 +8,6 @@
     html, body { margin: 0; padding: 0; overflow: hidden; background: #05050a; height: 100%; }
     #scene-canvas { position: fixed; inset: 0; z-index: 1; }
 
-    #clap-zones { position: fixed; inset: 0; z-index: 2; pointer-events: none;
-                  display: flex; flex-direction: column; }
-    .clap-zone { flex: 1; display: flex; align-items: center; justify-content: flex-end;
-                 padding-right: 14px; border-top: 1px dashed rgba(255,255,255,0.06); }
-    .clap-zone.high { border-top: none; }
-    .clap-zone span { font-family: monospace; font-size: 11px; color: rgba(255,255,255,0.28); }
-
     #webcam-video { position: fixed; bottom: 16px; right: 16px; width: 220px; border-radius: 8px;
                      opacity: 0.6; transform: scaleX(-1); z-index: 3; pointer-events: none; }
     #debug-canvas { position: fixed; bottom: 16px; right: 16px; width: 220px; height: 165px;
@@ -26,7 +19,7 @@
                         background: rgba(0,0,0,0.35); padding: 8px 10px; border-radius: 6px; }
     #gesture-debug { position: fixed; top: 16px; right: 16px; color: #6cf7ff; font-family: monospace;
                       font-size: 12px; z-index: 4; pointer-events: none; text-align: right;
-                      background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; }
+                      background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; min-width: 220px; }
     #flash-overlay { position: fixed; inset: 0; background: white; opacity: 0; pointer-events: none; z-index: 10; }
 
     #isotope-panel {
@@ -63,18 +56,13 @@
 </head>
 <body>
   <canvas id="scene-canvas"></canvas>
-  <div id="clap-zones">
-    <div class="clap-zone high"><span>HIGH · 50 neutrons</span></div>
-    <div class="clap-zone med"><span>MED · 20 neutrons</span></div>
-    <div class="clap-zone low"><span>LOW · 5 neutrons</span></div>
-  </div>
   <video id="webcam-video" autoplay playsinline muted></video>
   <canvas id="debug-canvas" width="220" height="165"></canvas>
   <div id="hud"></div>
   <div id="isotope-panel"></div>
   <div id="isotope-legend">
-    ☝️ U-235 &nbsp; ✌️ Th-232 &nbsp; 🤟 Pu-239<br/>
-    🖖 U-238 &nbsp; 🖐️ Cf-252 &nbsp;·&nbsp; 👏 clap height = LOW/MED/HIGH
+    ☝️ U-235 &nbsp; ✌️ Th-232 &nbsp; 🤟 Pu-239 &nbsp; 🖖 U-238 &nbsp; 🖐️ Cf-252<br/>
+    👏 tap = LOW · hold briefly = MED · hold longer = HIGH
   </div>
   <div id="gesture-debug">waiting for hand tracker…</div>
   <div id="flash-overlay"></div>
