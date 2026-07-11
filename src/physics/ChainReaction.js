@@ -1,5 +1,5 @@
 import { getIsotope, randomNeutronCount } from './IsotopeData.js';
-import { NEUTRON_TRAVEL_TIME } from './constants.js';
+import { computeTravelTime } from './constants.js';
 
 export const EVENTS = {
   ATOM_HIT: 'atom_hit',
@@ -23,11 +23,12 @@ class Atom {
 }
 
 class Neutron {
-  constructor(id, fromPosition, toAtom, spawnTime) {
+  constructor(id, fromPosition, toAtom, spawnTime, travelTime) {
     this.id = id;
     this.from = fromPosition;
     this.to = toAtom;
     this.spawnTime = spawnTime;
+    this.travelTime = travelTime; // computed per-neutron from distance — see constants.js
     this.arrived = false;
   }
 }
@@ -61,8 +62,6 @@ export class ChainReaction {
     (this.listeners[event] || []).forEach(fn => fn(payload));
   }
 
-  // --- Setup ---------------------------------------------------------------
-
   addAtom(position, isotopeId) {
     const id = this._nextAtomId++;
     const atom = new Atom(id, position, isotopeId);
@@ -83,19 +82,11 @@ export class ChainReaction {
     }
   }
 
-  /**
-   * Revives every atom of a given isotope back to alive=true. This is what
-   * gives a cluster a "fresh start" every time you select it — without this,
-   * a high-fission-probability isotope like U-235 or Pu-239 can fully consume
-   * its 35-atom cluster in a single cascade and then permanently show nothing.
-   */
   resetIsotope(isotopeId) {
     for (const atom of this.atoms.values()) {
       if (atom.isotopeId === isotopeId) atom.alive = true;
     }
   }
-
-  // --- Triggering strikes ---------------------------------------------------
 
   strikeAtom(atomId, { origin = null, depth = 0 } = {}) {
     const atom = this.atoms.get(atomId);
@@ -125,23 +116,22 @@ export class ChainReaction {
 
   _spawnNeutron(fromPosition, toAtom, depth) {
     const id = this._nextNeutronId++;
-    const n = new Neutron(id, fromPosition, toAtom, this.time);
+    const travelTime = computeTravelTime(fromPosition, toAtom.position);
+    const n = new Neutron(id, fromPosition, toAtom, this.time, travelTime);
     this.neutrons.set(id, n);
     this._depthByNeutron.set(id, depth);
     this.stats.liveNeutrons++;
     this._emit(EVENTS.NEUTRON_SPAWNED, {
-      id, from: fromPosition, to: toAtom.position, isotopeId: toAtom.isotopeId, depth,
+      id, from: fromPosition, to: toAtom.position, isotopeId: toAtom.isotopeId, travelTime, depth,
     });
   }
-
-  // --- Simulation step ---------------------------------------------------
 
   step(dt) {
     this.time += dt;
     const arrivedIds = [];
 
     for (const n of this.neutrons.values()) {
-      const t = (this.time - n.spawnTime) / NEUTRON_TRAVEL_TIME;
+      const t = (this.time - n.spawnTime) / n.travelTime;
       if (t >= 1 && !n.arrived) {
         n.arrived = true;
         arrivedIds.push(n.id);
