@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { EVENTS } from '../physics/ChainReaction.js';
-import { NEUTRON_TRAVEL_TIME } from '../physics/constants.js';
 import { ISOTOPES } from '../physics/IsotopeData.js';
 import { CurlNoiseField } from './CurlNoiseField.js';
 import fissionVert from './shaders/fission.vert.glsl?raw';
@@ -13,8 +12,7 @@ import speedlineFrag from './shaders/speedline.frag.glsl?raw';
 const MAX_BURST_PARTICLES = 4000;
 const MAX_TRAIL_PARTICLES = 800;
 const MAX_SPEEDLINE_SEGMENTS = 1200;
-const FADE_TAIL = 0.15; // seconds a neutron's line-streak keeps fading after arrival
-const TOTAL_TRAIL_LIFETIME = NEUTRON_TRAVEL_TIME + FADE_TAIL;
+const FADE_TAIL = 0.15;
 
 export class ParticleSystem {
   constructor(scene) {
@@ -42,8 +40,6 @@ export class ParticleSystem {
       hitStop?.trigger({ energy: e.energy });
     });
   }
-
-  // --- Fission burst points -------------------------------------------------
 
   _initBurstSystem() {
     const geo = new THREE.BufferGeometry();
@@ -101,8 +97,6 @@ export class ParticleSystem {
     colorAttr.needsUpdate = true;
   }
 
-  // --- Neutron trail points (curl-noise advected, isotope-colored) --------
-
   _initTrailSystem() {
     const geo = new THREE.BufferGeometry();
     const positions = new Float32Array(MAX_TRAIL_PARTICLES * 3);
@@ -128,8 +122,6 @@ export class ParticleSystem {
     this.scene.add(this.trailPoints);
   }
 
-  // --- Neutron streak lines (short trailing segment behind each neutron) --
-
   _initTrailLineSystem() {
     const geo = new THREE.BufferGeometry();
     const count = MAX_TRAIL_PARTICLES * 2;
@@ -147,7 +139,7 @@ export class ParticleSystem {
     this.scene.add(this.trailLines);
   }
 
-  _spawnTrail({ id, from, to, isotopeId }) {
+  _spawnTrail({ id, from, to, isotopeId, travelTime }) {
     const idx = this._trailCursor;
     this._trailCursor = (this._trailCursor + 1) % MAX_TRAIL_PARTICLES;
 
@@ -155,7 +147,7 @@ export class ParticleSystem {
     const rgb = hexToRgb(colorHex);
 
     this._activeTrails.set(id, {
-      index: idx, from, to, spawnTime: this.clock.time,
+      index: idx, from, to, spawnTime: this.clock.time, travelTime,
       prevPos: { ...from }, colorArr: [rgb.r, rgb.g, rgb.b],
     });
 
@@ -164,12 +156,10 @@ export class ParticleSystem {
     this.trailPoints.geometry.attributes.aColor.setXYZ(idx, rgb.r, rgb.g, rgb.b);
   }
 
-  // --- Impact speed lines (radial streak burst on fission) ----------------
-
   _initSpeedLineSystem() {
     const geo = new THREE.BufferGeometry();
     const count = MAX_SPEEDLINE_SEGMENTS * 2;
-    const position = new Float32Array(count * 3); // required by THREE, unused directly — actual position computed in-shader from aOrigin/aDirection
+    const position = new Float32Array(count * 3);
     const isEnd = new Float32Array(count);
     const origin = new Float32Array(count * 3);
     const direction = new Float32Array(count * 3);
@@ -228,8 +218,6 @@ export class ParticleSystem {
     isEndAttr.needsUpdate = true;
   }
 
-  // --- Per-frame update -----------------------------------------------------
-
   update(dt) {
     this.clock.time += dt;
     this.burstPoints.material.uniforms.uTime.value = this.clock.time;
@@ -242,12 +230,13 @@ export class ParticleSystem {
 
     for (const [id, trail] of this._activeTrails) {
       const age = this.clock.time - trail.spawnTime;
-      if (age > TOTAL_TRAIL_LIFETIME) {
+      const totalLifetime = trail.travelTime + FADE_TAIL;
+      if (age > totalLifetime) {
         this._activeTrails.delete(id);
         continue;
       }
 
-      const t = Math.min(1, age / NEUTRON_TRAVEL_TIME);
+      const t = Math.min(1, age / trail.travelTime);
       const lerped = {
         x: lerp(trail.from.x, trail.to.x, t),
         y: lerp(trail.from.y, trail.to.y, t),
@@ -258,7 +247,7 @@ export class ParticleSystem {
 
       posAttr.setXYZ(trail.index, pos.x, pos.y, pos.z);
 
-      const fadeT = age <= NEUTRON_TRAVEL_TIME ? 1 : Math.max(0, 1 - (age - NEUTRON_TRAVEL_TIME) / FADE_TAIL);
+      const fadeT = age <= trail.travelTime ? 1 : Math.max(0, 1 - (age - trail.travelTime) / FADE_TAIL);
       const [r, g, b] = trail.colorArr;
       linePosAttr.setXYZ(trail.index * 2, trail.prevPos.x, trail.prevPos.y, trail.prevPos.z);
       linePosAttr.setXYZ(trail.index * 2 + 1, pos.x, pos.y, pos.z);
