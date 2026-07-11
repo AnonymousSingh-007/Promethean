@@ -6,6 +6,7 @@ import { ChainReaction } from './physics/ChainReaction.js';
 import { ISOTOPES, FINGER_COUNT_TO_ISOTOPE } from './physics/IsotopeData.js';
 import { ParticleSystem } from './vfx/ParticleSystem.js';
 import { HitStop } from './vfx/HitStop.js';
+import { ChargeEffect } from './vfx/ChargeEffect.js';
 import { HUD } from './ui/HUD.js';
 import { IsotopePanel } from './ui/IsotopePanel.js';
 import { StatusOverlay } from './ui/StatusOverlay.js';
@@ -26,6 +27,7 @@ const sceneManager = new SceneManager(canvas);
 const chainReaction = new ChainReaction({ neighborRadius: 3.5, maxNeighbors: 6 });
 const particles = new ParticleSystem(sceneManager.scene);
 const hitStop = new HitStop(flashEl);
+const chargeEffect = new ChargeEffect(sceneManager.scene);
 const hud = new HUD(hudEl);
 const isotopePanel = new IsotopePanel(isotopePanelEl);
 const statusOverlay = new StatusOverlay(statusEl);
@@ -35,7 +37,7 @@ const logger = new GestureLogger();
 particles.attachTo(chainReaction, hitStop);
 chainReaction.on('atom_fissioned', ({ atomId }) => sceneManager.killAtomVisual(atomId));
 
-// --- Build all five isotope clusters (only the active one renders at a time) ---
+// --- Build all five isotope clusters ---
 for (const isotopeId of Object.keys(ISOTOPES)) {
   sceneManager.buildAtomCluster(chainReaction, isotopeId, 35, { radius: 3.2, color: ISOTOPES[isotopeId].color });
 }
@@ -47,32 +49,24 @@ sceneManager.setActiveIsotope(selectedIsotopeId);
 isotopePanel.show(selectedIsotopeId);
 let lastHandsMeta = { handCount: 0 };
 
-// --- Clap intensity: determined by clap HEIGHT on screen (top=HIGH, bottom=LOW) ---
-const CLAP_TIERS = [
-  { name: 'LOW', count: 5, yMax: -0.33 },
-  { name: 'MED', count: 20, yMax: 0.33 },
-  { name: 'HIGH', count: 50, yMax: Infinity },
-];
-function getClapTier(ndcY) {
-  return CLAP_TIERS.find(tier => ndcY <= tier.yMax) ?? CLAP_TIERS[CLAP_TIERS.length - 1];
-}
+const TIER_NEUTRON_COUNT = { LOW: 5, MED: 20, HIGH: 50 };
 
 function selectIsotope(isotopeId, fingerCount, source = 'gesture') {
   if (isotopeId === selectedIsotopeId) return;
   selectedIsotopeId = isotopeId;
-  chainReaction.resetIsotope(isotopeId); // fresh cluster every time — fixes high-fission isotopes vanishing permanently
+  chainReaction.resetIsotope(isotopeId);
   sceneManager.setActiveIsotope(isotopeId);
   isotopePanel.show(isotopeId);
   playSelectTone(fingerCount - 1);
   logger.log('isotope_selected', { fingerCount, isotopeId, source });
 }
 
-function fireClap(position, source = 'gesture') {
-  const tier = getClapTier(position.y);
+function fireClap(position, tier, holdDuration, source = 'gesture') {
+  const count = TIER_NEUTRON_COUNT[tier] ?? 20;
   const worldOrigin = sceneManager.screenToWorldPoint(position.x, position.y, 14);
-  const hitCount = chainReaction.bombardIsotope(selectedIsotopeId, tier.count, worldOrigin);
-  playClapTone(tier.count);
-  logger.log('clap', { isotopeId: selectedIsotopeId, tier: tier.name, requested: tier.count, neutronsFired: hitCount, source });
+  const hitCount = chainReaction.bombardIsotope(selectedIsotopeId, count, worldOrigin);
+  playClapTone(count);
+  logger.log('clap', { isotopeId: selectedIsotopeId, tier, holdDuration: holdDuration?.toFixed(2), requested: count, neutronsFired: hitCount, source });
 }
 
 // --- Gesture wiring ---
@@ -81,7 +75,22 @@ gestures.on(GESTURES.ISOTOPE_SELECTED, ({ fingerCount }) => {
   if (isotopeId) selectIsotope(isotopeId, fingerCount);
 });
 
-gestures.on(GESTURES.CLAP, ({ position }) => fireClap(position));
+gestures.on(GESTURES.CHARGE_START, ({ position }) => {
+  const worldPos = sceneManager.screenToWorldPoint(position.x, position.y, 10);
+  chargeEffect.setCharging(worldPos, 0);
+});
+
+gestures.on(GESTURES.CHARGING, ({ position, progress }) => {
+  const worldPos = sceneManager.screenToWorldPoint(position.x, position.y, 10);
+  chargeEffect.setCharging(worldPos, progress);
+});
+
+gestures.on(GESTURES.CHARGE_CANCEL, () => chargeEffect.cancel());
+
+gestures.on(GESTURES.CLAP, ({ position, tier, holdDuration }) => {
+  chargeEffect.release(tier);
+  fireClap(position, tier, holdDuration);
+});
 
 gestures.on(GESTURES.HAND_FOUND, () => logger.log('hand_found', {}));
 gestures.on(GESTURES.HAND_LOST, () => logger.log('hand_lost', {}));
@@ -92,11 +101,18 @@ gestures.on(GESTURES.HANDS_UPDATE, (meta) => {
     gestureDebugEl.textContent = 'NO HANDS VISIBLE';
     return;
   }
+  if (meta.handCount >= 2) {
+    const chargeBar = '█'.repeat(Math.round((meta.chargeProgress ?? 0) * 10)) + '░'.repeat(10 - Math.round((meta.chargeProgress ?? 0) * 10));
+    gestureDebugEl.innerHTML = `
+      hands: ${meta.handCount} · clap distance: ${meta.clapDistance ?? '—'} (fires < 2.20)<br/>
+      ${meta.charging ? `CHARGING [${chargeBar}]` : 'bring hands together to charge'}
+    `;
+    return;
+  }
   const streakBar = '█'.repeat(meta.pendingStreak ?? 0) + '░'.repeat(Math.max(0, 5 - (meta.pendingStreak ?? 0)));
   gestureDebugEl.innerHTML = `
     hands: ${meta.handCount} · counts: ${meta.counts.join(', ')}<br/>
-    locking in: ${meta.pendingCount ?? '—'}  [${streakBar}]<br/>
-    clap distance: ${meta.clapDistance ?? '—'} (fires < 2.20)
+    locking in: ${meta.pendingCount ?? '—'}  [${streakBar}]
   `;
 });
 
@@ -113,7 +129,7 @@ async function initTracking() {
     statusOverlay.showLoading('Requesting camera access…');
     await handTracker.startWebcam();
     statusOverlay.hide();
-    gestureDebugEl.textContent = 'tracker ready — hold up fingers, then clap';
+    gestureDebugEl.textContent = 'tracker ready — hold up fingers, then bring hands together to charge';
   } catch (err) {
     console.error('[Promethean] Tracking init failed:', err);
     statusOverlay.showError(describeTrackingError(err), () => initTracking());
@@ -124,7 +140,7 @@ async function initTracking() {
 
 function describeTrackingError(err) {
   if (err.name === 'NotAllowedError') return 'Camera access was denied. Allow camera permission for this site, then retry.';
-  if (err.name === 'NotFoundError') return 'No camera was found on this device. You can still play using the keyboard (see bottom-left legend).';
+  if (err.name === 'NotFoundError') return 'No camera was found on this device. You can still play using the keyboard.';
   if (err.message?.includes('timed out')) return 'Camera did not respond in time — check that no other app is using it, then retry.';
   return `Hand tracking failed to start (${err.message}). You can still play using the keyboard.`;
 }
@@ -137,9 +153,9 @@ function initFallbackControls() {
       const fingerCount = Number(e.key);
       selectIsotope(FINGER_COUNT_TO_ISOTOPE[fingerCount], fingerCount, 'keyboard');
     }
-    if (e.code === 'Space') { e.preventDefault(); fireClap({ x: 0, y: 0 }, 'keyboard'); }       // MED
-    if (e.key === '-') fireClap({ x: 0, y: -0.6 }, 'keyboard');                                  // LOW
-    if (e.key === '=') fireClap({ x: 0, y: 0.6 }, 'keyboard');                                   // HIGH
+    if (e.code === 'Space') { e.preventDefault(); fireClap({ x: 0, y: 0 }, 'MED', 0.4, 'keyboard'); }
+    if (e.key === '-') fireClap({ x: 0, y: 0 }, 'LOW', 0.05, 'keyboard');
+    if (e.key === '=') fireClap({ x: 0, y: 0 }, 'HIGH', 0.9, 'keyboard');
   });
 }
 
@@ -148,6 +164,7 @@ initTracking();
 // --- Render loop ---
 let lastTime = performance.now();
 let elapsed = 0;
+let heat = 0;
 function animate() {
   requestAnimationFrame(animate);
   const now = performance.now();
@@ -157,12 +174,20 @@ function animate() {
 
   handTracker.tick();
   hitStop.update(dt);
+  chargeEffect.updateFrame(dt);
 
   if (!hitStop.isFrozen()) {
     chainReaction.step(dt);
   }
   particles.update(dt);
   sceneManager.updateAtoms(dt, elapsed);
+
+  // Ambient heat: rises toward 1 the more neutrons are simultaneously in
+  // flight (i.e. a cascade is actively running), decays back to 0 when quiet.
+  const targetHeat = Math.min(1, chainReaction.stats.liveNeutrons / 25);
+  heat += (targetHeat - heat) * Math.min(1, dt * 2.5);
+  sceneManager.setHeat(heat);
+
   hud.update(chainReaction.stats, { handCount: lastHandsMeta.handCount });
 
   sceneManager.render();

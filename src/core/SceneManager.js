@@ -4,31 +4,36 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-// Each isotope still lives at its own fixed spatial position — this matters
-// for physics (ChainReaction's neighbor graph relies on spatial separation so
-// cascades never jump isotopes) — but only ONE cluster is ever visible/rendered
-// at a time. Switching isotope hides the old cluster, shows the new one, and
-// smoothly moves the camera to frame it.
 const CLUSTER_LAYOUT = {
   U235:  { x: -9, y:  4, z: 0 },
   Th232: { x:  9, y:  4, z: 0 },
   Pu239: { x: -9, y: -4, z: 0 },
   U238:  { x:  9, y: -4, z: 0 },
+  Cf252: { x:  0, y:  9, z: 0 },
 };
 
-const CAMERA_LERP = 0.06; // per-frame lerp factor for camera focus transitions — lower = slower/smoother
+const CAMERA_LERP = 0.06;
+
+// Ambient color grading: the scene shifts warmer as more neutrons are live at
+// once (i.e. a cascade is actively running), and cools back to base when quiet.
+// This gives full-screen ambient feedback of "how hot is this reaction right
+// now" without requiring anyone to read the HUD numbers.
+const COOL_BG = new THREE.Color(0x05050a);
+const HOT_BG = new THREE.Color(0x2a0f08);
+const COOL_FOG = new THREE.Color(0x05050a);
+const HOT_FOG = new THREE.Color(0x3a1206);
 
 export class SceneManager {
   constructor(canvas) {
     this.canvas = canvas;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x05050a);
-    this.scene.fog = new THREE.FogExp2(0x05050a, 0.012);
+    this.scene.background = COOL_BG.clone();
+    this.scene.fog = new THREE.FogExp2(COOL_FOG.getHex(), 0.012);
 
     this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
     this.camera.position.set(-3, 6, 12);
     this._camTargetPos = this.camera.position.clone();
-    this._camLookAt = new THREE.Vector3(-9, 4, 0); // defaults to U235's cluster center
+    this._camLookAt = new THREE.Vector3(-9, 4, 0);
     this._camTargetLookAt = this._camLookAt.clone();
     this.camera.lookAt(this._camLookAt);
 
@@ -44,23 +49,19 @@ export class SceneManager {
     rim.position.set(-10, -8, -6);
     this.scene.add(rim);
 
-    // --- Bloom post-processing pipeline ---
-    // UnrealBloomPass makes the emissive nucleus materials and additive particle
-    // bursts actually glow, instead of just being bright-colored and flat.
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.9,   // strength
-      0.6,   // radius
-      0.15   // threshold — lower = more of the scene contributes to bloom
+      0.9, 0.6, 0.15
     );
     this.composer.addPass(this.bloomPass);
-    this.composer.addPass(new OutputPass()); // correct color space/tone mapping after bloom
+    this.composer.addPass(new OutputPass());
 
     this.atomMeshes = new Map();
-    this.atomVisuals = new Map(); // atomId -> { group, nucleus, ring1, ring2, isotopeId, alive, active, phase, ... }
+    this.atomVisuals = new Map();
     this.activeIsotopeId = null;
+    this._baseBloomStrength = 0.9;
 
     window.addEventListener('resize', () => this._onResize());
   }
@@ -96,7 +97,7 @@ export class SceneManager {
 
       const group = new THREE.Group();
       group.position.copy(worldPos);
-      group.visible = false; // hidden until setActiveIsotope() reveals this isotope's cluster
+      group.visible = false;
 
       const nucleusMat = new THREE.MeshStandardMaterial({
         color, emissive: color, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.35,
@@ -117,7 +118,7 @@ export class SceneManager {
       this.atomVisuals.set(atom.id, {
         group, nucleus, ring1, ring2, isotopeId,
         alive: true,
-        active: false, // whether this atom's isotope is the currently selected one
+        active: false,
         phase: Math.random() * Math.PI * 2,
         spinSpeed1: rand(0.4, 0.9) * (Math.random() < 0.5 ? 1 : -1),
         spinSpeed2: rand(0.3, 0.7) * (Math.random() < 0.5 ? 1 : -1),
@@ -128,14 +129,10 @@ export class SceneManager {
     return results;
   }
 
-  /**
-   * Shows only this isotope's cluster (hides the other three) and smoothly
-   * moves the camera to frame it. Call once at startup with the default
-   * isotope, then again every time ISOTOPE_SELECTED fires.
-   */
-  setActiveIsotope(isotopeId) {
+  setActiveIsotope(isotopeId, { revive = true } = {}) {
     this.activeIsotopeId = isotopeId;
     for (const visual of this.atomVisuals.values()) {
+      if (visual.isotopeId === isotopeId && revive) visual.alive = true;
       visual.active = visual.isotopeId === isotopeId;
       visual.group.visible = visual.active && visual.alive;
     }
@@ -145,7 +142,14 @@ export class SceneManager {
     this._camTargetPos.set(center.x - 3, center.y + 2, center.z + 9);
   }
 
-  /** Call once per frame to smoothly move the camera toward the active cluster and animate ring/nucleus motion. */
+  /** heat: 0 (quiet) to 1 (cascade in full swing) — see main.js for how this is computed. */
+  setHeat(heat) {
+    const bg = COOL_BG.clone().lerp(HOT_BG, heat);
+    this.scene.background = bg;
+    this.scene.fog.color.copy(COOL_FOG).lerp(HOT_FOG, heat);
+    this.bloomPass.strength = this._baseBloomStrength + heat * 0.5;
+  }
+
   updateAtoms(dt, elapsedTime) {
     this.camera.position.lerp(this._camTargetPos, CAMERA_LERP);
     this._camLookAt.lerp(this._camTargetLookAt, CAMERA_LERP);
@@ -180,7 +184,7 @@ export class SceneManager {
     const visual = this.atomVisuals.get(atomId);
     if (!visual) return;
     visual.alive = false;
-    visual.group.visible = visual.active && visual.alive; // will now evaluate to false
+    visual.group.visible = visual.active && visual.alive;
   }
 
   render() {
