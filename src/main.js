@@ -12,7 +12,6 @@ import { IsotopePanel } from './ui/IsotopePanel.js';
 import { StatusOverlay } from './ui/StatusOverlay.js';
 import { playSelectTone, playClapTone } from './utils/Sfx.js';
 
-// --- DOM refs ---
 const canvas = document.getElementById('scene-canvas');
 const video = document.getElementById('webcam-video');
 const debugCanvas = document.getElementById('debug-canvas');
@@ -22,7 +21,6 @@ const gestureDebugEl = document.getElementById('gesture-debug');
 const flashEl = document.getElementById('flash-overlay');
 const statusEl = document.getElementById('status-overlay');
 
-// --- Core systems ---
 const sceneManager = new SceneManager(canvas);
 const chainReaction = new ChainReaction({ neighborRadius: 3.5, maxNeighbors: 6 });
 const particles = new ParticleSystem(sceneManager.scene);
@@ -37,13 +35,11 @@ const logger = new GestureLogger();
 particles.attachTo(chainReaction, hitStop);
 chainReaction.on('atom_fissioned', ({ atomId }) => sceneManager.killAtomVisual(atomId));
 
-// --- Build all five isotope clusters ---
 for (const isotopeId of Object.keys(ISOTOPES)) {
   sceneManager.buildAtomCluster(chainReaction, isotopeId, 35, { radius: 3.2, color: ISOTOPES[isotopeId].color });
 }
 chainReaction.buildNeighborGraph();
 
-// --- Default state ---
 let selectedIsotopeId = 'U235';
 sceneManager.setActiveIsotope(selectedIsotopeId);
 isotopePanel.show(selectedIsotopeId);
@@ -69,7 +65,6 @@ function fireClap(position, tier, holdDuration, source = 'gesture') {
   logger.log('clap', { isotopeId: selectedIsotopeId, tier, holdDuration: holdDuration?.toFixed(2), requested: count, neutronsFired: hitCount, source });
 }
 
-// --- Gesture wiring ---
 gestures.on(GESTURES.ISOTOPE_SELECTED, ({ fingerCount }) => {
   const isotopeId = FINGER_COUNT_TO_ISOTOPE[fingerCount];
   if (isotopeId) selectIsotope(isotopeId, fingerCount);
@@ -109,14 +104,20 @@ gestures.on(GESTURES.HANDS_UPDATE, (meta) => {
     `;
     return;
   }
-  const streakBar = '█'.repeat(meta.pendingStreak ?? 0) + '░'.repeat(Math.max(0, 5 - (meta.pendingStreak ?? 0)));
+  if (meta.lockCooldownRemaining > 0) {
+    gestureDebugEl.innerHTML = `
+      hands: ${meta.handCount} · counts: ${meta.counts.join(', ')}<br/>
+      LOCKED — new selection in ${meta.lockCooldownRemaining.toFixed(1)}s
+    `;
+    return;
+  }
+  const streakBar = '█'.repeat(meta.pendingStreak ?? 0) + '░'.repeat(Math.max(0, 7 - (meta.pendingStreak ?? 0)));
   gestureDebugEl.innerHTML = `
     hands: ${meta.handCount} · counts: ${meta.counts.join(', ')}<br/>
     locking in: ${meta.pendingCount ?? '—'}  [${streakBar}]
   `;
 });
 
-// --- Hand tracking bootstrap ---
 const handTracker = new HandTracker(video, debugCanvas);
 handTracker.onResults((results) => gestures.update(results.landmarks));
 
@@ -161,7 +162,6 @@ function initFallbackControls() {
 
 initTracking();
 
-// --- Render loop ---
 let lastTime = performance.now();
 let elapsed = 0;
 let heat = 0;
@@ -182,8 +182,6 @@ function animate() {
   particles.update(dt);
   sceneManager.updateAtoms(dt, elapsed);
 
-  // Ambient heat: rises toward 1 the more neutrons are simultaneously in
-  // flight (i.e. a cascade is actively running), decays back to 0 when quiet.
   const targetHeat = Math.min(1, chainReaction.stats.liveNeutrons / 25);
   heat += (targetHeat - heat) * Math.min(1, dt * 2.5);
   sceneManager.setHeat(heat);
