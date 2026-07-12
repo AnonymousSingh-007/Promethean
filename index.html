@@ -14,9 +14,6 @@
                      border-radius: 8px; z-index: 4; pointer-events: none; }
     #hud { position: fixed; top: 16px; left: 16px; color: #d7d7ff; font-family: monospace;
            font-size: 12px; z-index: 4; pointer-events: none; }
-    #isotope-legend { position: fixed; bottom: 16px; left: 16px; color: #9fa8da; font-family: monospace;
-                        font-size: 11px; z-index: 4; pointer-events: none; line-height: 1.6;
-                        background: rgba(0,0,0,0.35); padding: 8px 10px; border-radius: 6px; }
     #gesture-debug { position: fixed; top: 16px; right: 16px; color: #6cf7ff; font-family: monospace;
                       font-size: 12px; z-index: 4; pointer-events: none; text-align: right;
                       background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; min-width: 220px; }
@@ -36,6 +33,22 @@
       100% { box-shadow: 0 0 0px rgba(255,255,255,0);   border-color: rgba(255,255,255,0.15); }
     }
     .confirm-pulse { animation: confirmPulse 0.5s ease-out; }
+
+    #isotope-menu {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95);
+      z-index: 6; pointer-events: none; opacity: 0; transition: opacity 0.15s ease, transform 0.15s ease;
+      background: rgba(8,8,16,0.88); border: 1px solid rgba(255,255,255,0.18); border-radius: 12px;
+      padding: 16px 22px; font-family: monospace; color: #d7d7ff; min-width: 280px;
+    }
+    #isotope-menu.visible { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    .menu-title { font-size: 13px; letter-spacing: 0.1em; opacity: 0.6; margin-bottom: 10px; text-align: center; }
+    .menu-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 13px; }
+    .menu-key { width: 18px; height: 18px; border-radius: 4px; background: rgba(255,255,255,0.12);
+                 display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 11px; }
+    .menu-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .menu-name { flex: 1; }
+    .menu-pct { opacity: 0.6; font-size: 11px; }
+    .menu-hint { margin-top: 10px; font-size: 11px; opacity: 0.5; text-align: center; }
 
     #status-overlay {
       position: fixed; inset: 0; z-index: 20; display: none; flex-direction: column;
@@ -60,10 +73,7 @@
   <canvas id="debug-canvas" width="220" height="165"></canvas>
   <div id="hud"></div>
   <div id="isotope-panel"></div>
-  <div id="isotope-legend">
-    ☝️ U-235 &nbsp; ✌️ Th-232 &nbsp; 🤟 Pu-239 &nbsp; 🖖 U-238 &nbsp; 🖐️ Cf-252<br/>
-    👏 tap = LOW · hold briefly = MED · hold longer = HIGH
-  </div>
+  <div id="isotope-menu"></div>
   <div id="gesture-debug">waiting for hand tracker…</div>
   <div id="flash-overlay"></div>
   <div id="status-overlay"></div>
