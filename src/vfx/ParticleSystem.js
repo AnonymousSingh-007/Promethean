@@ -33,11 +33,21 @@ export class ParticleSystem {
 
   attachTo(chainReaction, hitStop) {
     chainReaction.on(EVENTS.NEUTRON_SPAWNED, (e) => this._spawnTrail(e));
+
     chainReaction.on(EVENTS.ATOM_FISSIONED, (e) => {
       const color = ISOTOPES[e.isotopeId]?.color ?? 0xffffff;
-      this._spawnBurst(e.position, e.energy);
+      this._spawnBurst(e.position, e.energy, 50, hexToRgbArr(warmTint(color)), [10, 18]);
       this._spawnSpeedLineBurst(e.position, color);
       hitStop?.trigger({ energy: e.energy });
+    });
+
+    // Every hit now gets SOME visual, not just fissions — a small dim isotope-
+    // colored spark on absorb, so the two "safe" isotopes (Th-232, U-238),
+    // which mostly absorb rather than fission, don't sit there silently.
+    chainReaction.on(EVENTS.ATOM_ABSORBED, (e) => {
+      const color = ISOTOPES[e.isotopeId]?.color ?? 0x888899;
+      const rgb = hexToRgb(color);
+      this._spawnBurst(e.position, 20, 8, [rgb.r * 0.6, rgb.g * 0.6, rgb.b * 0.6], [4, 7]);
     });
   }
 
@@ -68,7 +78,7 @@ export class ParticleSystem {
     this.scene.add(this.burstPoints);
   }
 
-  _spawnBurst(position, energy, particleCount = 50, color = [1, 0.6, 0.3]) {
+  _spawnBurst(position, energy, particleCount = 50, color = [1, 0.6, 0.3], sizeRange = [10, 18]) {
     const geo = this.burstPoints.geometry;
     const posAttr = geo.attributes.position;
     const velAttr = geo.attributes.aVelocity;
@@ -86,7 +96,7 @@ export class ParticleSystem {
       const dir = randomOnSphere();
       velAttr.setXYZ(idx, dir.x * speed, dir.y * speed, dir.z * speed);
       startAttr.setX(idx, this.clock.time);
-      sizeAttr.setX(idx, 10 + Math.random() * 8);
+      sizeAttr.setX(idx, sizeRange[0] + Math.random() * (sizeRange[1] - sizeRange[0]));
       colorAttr.setXYZ(idx, color[0], color[1], color[2]);
     }
 
@@ -103,11 +113,13 @@ export class ParticleSystem {
     const births = new Float32Array(MAX_TRAIL_PARTICLES).fill(-999);
     const sizes = new Float32Array(MAX_TRAIL_PARTICLES);
     const colors = new Float32Array(MAX_TRAIL_PARTICLES * 3);
+    const travelTimes = new Float32Array(MAX_TRAIL_PARTICLES).fill(0.5);
 
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.setAttribute('aBirth', new THREE.BufferAttribute(births, 1));
     geo.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
     geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('aTravelTime', new THREE.BufferAttribute(travelTimes, 1));
 
     const mat = new THREE.ShaderMaterial({
       vertexShader: trailVert,
@@ -152,8 +164,9 @@ export class ParticleSystem {
     });
 
     this.trailPoints.geometry.attributes.aBirth.setX(idx, this.clock.time);
-    this.trailPoints.geometry.attributes.aSize.setX(idx, 10);
+    this.trailPoints.geometry.attributes.aSize.setX(idx, 14); // bumped up from 10 — bigger, more visible core
     this.trailPoints.geometry.attributes.aColor.setXYZ(idx, rgb.r, rgb.g, rgb.b);
+    this.trailPoints.geometry.attributes.aTravelTime.setX(idx, travelTime);
   }
 
   _initSpeedLineSystem() {
@@ -236,7 +249,8 @@ export class ParticleSystem {
         continue;
       }
 
-      const t = Math.min(1, age / trail.travelTime);
+      const rawT = Math.min(1, age / trail.travelTime);
+      const t = 1 - (1 - rawT) * (1 - rawT); // ease-out: fast start, decelerates into the target — emphasizes the impact moment
       const lerped = {
         x: lerp(trail.from.x, trail.to.x, t),
         y: lerp(trail.from.y, trail.to.y, t),
@@ -276,6 +290,23 @@ function randomOnSphere() {
 
 function hexToRgb(hex) {
   return { r: ((hex >> 16) & 255) / 255, g: ((hex >> 8) & 255) / 255, b: (hex & 255) / 255 };
+}
+
+function hexToRgbArr(hex) {
+  const c = hexToRgb(hex);
+  return [c.r, c.g, c.b];
+}
+
+// Fission bursts stay warm/orange regardless of isotope (explosions read as
+// explosions), but nudged slightly toward the isotope's own hue for a subtle
+// per-isotope identity without losing the "hot" feel.
+function warmTint(isotopeHex) {
+  const iso = hexToRgb(isotopeHex);
+  const warm = { r: 1, g: 0.6, b: 0.3 };
+  const mix = (a, b, t) => a + (b - a) * t;
+  return (Math.round(mix(warm.r, iso.r, 0.25) * 255) << 16) |
+         (Math.round(mix(warm.g, iso.g, 0.25) * 255) << 8) |
+          Math.round(mix(warm.b, iso.b, 0.25) * 255);
 }
 
 function lerp(a, b, t) {
