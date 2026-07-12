@@ -4,20 +4,22 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
+// 3x3 grid, spaced generously so the neighbor graph (radius 3.5) never lets
+// a cascade cross between isotopes even though only one cluster renders at once.
 const CLUSTER_LAYOUT = {
-  U235:  { x: -9, y:  4, z: 0 },
-  Th232: { x:  9, y:  4, z: 0 },
-  Pu239: { x: -9, y: -4, z: 0 },
-  U238:  { x:  9, y: -4, z: 0 },
-  Cf252: { x:  0, y:  9, z: 0 },
+  U235:  { x: -14, y:  9, z: 0 },
+  Th232: { x:   0, y:  9, z: 0 },
+  Pu239: { x:  14, y:  9, z: 0 },
+  U238:  { x: -14, y:  0, z: 0 },
+  Cf252: { x:   0, y:  0, z: 0 },
+  Pu241: { x:  14, y:  0, z: 0 },
+  U233:  { x: -14, y: -9, z: 0 },
+  Np237: { x:   0, y: -9, z: 0 },
+  Am241: { x:  14, y: -9, z: 0 },
 };
 
 const CAMERA_LERP = 0.06;
 
-// Ambient color grading: the scene shifts warmer as more neutrons are live at
-// once (i.e. a cascade is actively running), and cools back to base when quiet.
-// This gives full-screen ambient feedback of "how hot is this reaction right
-// now" without requiring anyone to read the HUD numbers.
 const COOL_BG = new THREE.Color(0x05050a);
 const HOT_BG = new THREE.Color(0x2a0f08);
 const COOL_FOG = new THREE.Color(0x05050a);
@@ -31,9 +33,9 @@ export class SceneManager {
     this.scene.fog = new THREE.FogExp2(COOL_FOG.getHex(), 0.012);
 
     this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
-    this.camera.position.set(-3, 6, 12);
+    this.camera.position.set(-17, 11, 9);
     this._camTargetPos = this.camera.position.clone();
-    this._camLookAt = new THREE.Vector3(-9, 4, 0);
+    this._camLookAt = new THREE.Vector3(-14, 9, 0);
     this._camTargetLookAt = this._camLookAt.clone();
     this.camera.lookAt(this._camLookAt);
 
@@ -142,7 +144,6 @@ export class SceneManager {
     this._camTargetPos.set(center.x - 3, center.y + 2, center.z + 9);
   }
 
-  /** heat: 0 (quiet) to 1 (cascade in full swing) — see main.js for how this is computed. */
   setHeat(heat) {
     const bg = COOL_BG.clone().lerp(HOT_BG, heat);
     this.scene.background = bg;
