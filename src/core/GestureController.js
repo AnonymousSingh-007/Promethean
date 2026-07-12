@@ -1,49 +1,50 @@
-// FINGER COUNT (one hand, debounced, angle-based): selects an isotope.
+// Two binary gestures, both far more reliable than counting:
 //
-// Detection method: each finger is counted as "extended" based on the joint
-// ANGLE at its middle knuckle (PIP), not distance from the wrist. A straight
-// finger has a PIP angle near 180°; a curled one is well under 150°. This is
-// far more robust than the old wrist-distance-ratio method — in particular it
-// correctly handles the very common case where someone's ring finger can't
-// fully curl independently of the pinky (a real biomechanical limitation, not
-// a user error) — a distance-ratio check misreads that stuck-halfway ring
-// finger as "extended" about half the time; an angle check correctly sees
-// that the knuckle really is bent and counts it as curled.
+//   FLAT PALM (all five digits extended, hysteresis-smoothed): toggles the
+//     isotope selection menu. Selection itself happens via keyboard number
+//     keys (see main.js) — the palm just brings up the reference menu, it
+//     doesn't select anything itself, so a missed/late palm detection never
+//     costs you a wrong selection, only a missing helper panel.
 //
-// Once a selection locks in, finger-count changes are ignored for
-// SELECTION_LOCK_COOLDOWN seconds — this stops rapid back-and-forth
-// reselection from residual noise, forcing a deliberate pause before
-// switching again.
+//   ONE FINGER (index extended, everything else curled): hold to charge,
+//     release to fire. Hold duration sets the tier (LOW/MED/HIGH), same idea
+//     as the old two-hand clap-hold, but single-hand and far more reliable
+//     since it's one clean binary shape instead of a two-hand distance/timing
+//     read.
 //
-// CLAP remains the charge-hold gesture from before: hold hands together,
-// release to fire, hold duration sets the tier.
+// Every finger's extended/curled state uses per-finger HYSTERESIS: a finger
+// needs to clear a higher "enter" angle to become extended, but must drop
+// below a lower "exit" angle to become curled again. This kills the flicker
+// that happens when a finger's angle hovers right at a single shared
+// threshold — a real, common failure mode with plain thresholding.
 
-const FINGER_JOINTS = [
-  { mcp: 5, pip: 6, tip: 8 },    // index
-  { mcp: 9, pip: 10, tip: 12 },  // middle
-  { mcp: 13, pip: 14, tip: 16 }, // ring
-  { mcp: 17, pip: 18, tip: 20 }, // pinky
-];
-const THUMB_JOINTS = { mcp: 2, ip: 3, tip: 4 };
+const FINGER_JOINTS = {
+  thumb:  { mcp: 2, pip: 3, tip: 4 },
+  index:  { mcp: 5, pip: 6, tip: 8 },
+  middle: { mcp: 9, pip: 10, tip: 12 },
+  ring:   { mcp: 13, pip: 14, tip: 16 },
+  pinky:  { mcp: 17, pip: 18, tip: 20 },
+};
 
-const FINGER_EXTENDED_ANGLE = (150 * Math.PI) / 180; // finger counted extended if its PIP angle exceeds this
-const THUMB_EXTENDED_ANGLE = (140 * Math.PI) / 180;  // thumb rarely fully straightens, slightly looser threshold
+const FINGER_ENTER_ANGLE = (155 * Math.PI) / 180;
+const FINGER_EXIT_ANGLE = (130 * Math.PI) / 180;
+const THUMB_ENTER_ANGLE = (145 * Math.PI) / 180;
+const THUMB_EXIT_ANGLE = (115 * Math.PI) / 180;
 
-const CLAP_DISTANCE_RATIO = 2.2;
+const PALM_STABLE_FRAMES = 4;
+
 const CLAP_COOLDOWN = 0.45;
-const STABLE_FRAMES_REQUIRED = 7; // ~115ms at 60fps — slightly stricter than before, cheap now that detection itself is more accurate
-const SELECTION_LOCK_COOLDOWN = 1.2; // seconds a fresh selection is immune to being overridden
-
 const CHARGE_TAP_MAX = 0.15;
 const CHARGE_MED_MAX = 0.6;
 const CHARGE_FULL = 1.0;
 
 export const GESTURES = {
-  ISOTOPE_SELECTED: 'isotope_selected',
+  PALM_SHOWN: 'palm_shown',
+  PALM_HIDDEN: 'palm_hidden',
   CHARGE_START: 'charge_start',
   CHARGING: 'charging',
   CHARGE_CANCEL: 'charge_cancel',
-  CLAP: 'clap',
+  CLAP: 'clap', // fires on release of the one-finger charge
   HANDS_UPDATE: 'hands_update',
   HAND_FOUND: 'hand_found',
   HAND_LOST: 'hand_lost',
@@ -52,14 +53,14 @@ export const GESTURES = {
 export class GestureController {
   constructor() {
     this.listeners = {};
-    this._lastFingerCount = null;
-    this._lastSelectionTime = -999;
-    this._pendingCount = null;
-    this._pendingStreak = 0;
-    this._lastClapTime = -999;
-    this._wasHandsClose = false;
+    this._fingerState = { thumb: false, index: false, middle: false, ring: false, pinky: false };
+    this._palmStreak = 0;
+    this._notPalmStreak = 0;
+    this._menuVisible = false;
+    this._wasOnePoint = false;
     this._isCharging = false;
-    this._handsTogetherSince = null;
+    this._chargeSince = null;
+    this._lastClapTime = -999;
     this._prevHandCount = 0;
   }
 
@@ -81,131 +82,90 @@ export class GestureController {
     this._prevHandCount = handCount;
 
     if (handCount === 0) {
-      this._wasHandsClose = false;
-      this._pendingCount = null;
-      this._pendingStreak = 0;
+      this._fingerState = { thumb: false, index: false, middle: false, ring: false, pinky: false };
+      this._palmStreak = 0;
+      this._notPalmStreak = 0;
+      if (this._menuVisible) {
+        this._menuVisible = false;
+        this._emit(GESTURES.PALM_HIDDEN, {});
+      }
       if (this._isCharging) {
         this._isCharging = false;
-        this._handsTogetherSince = null;
+        this._chargeSince = null;
         this._emit(GESTURES.CHARGE_CANCEL, {});
       }
-      this._emit(GESTURES.HANDS_UPDATE, { handCount: 0, counts: [], selectedFingerCount: this._lastFingerCount });
+      this._wasOnePoint = false;
+      this._emit(GESTURES.HANDS_UPDATE, { handVisible: false });
       return;
     }
 
-    const handsInfo = landmarksList.map((hand) => {
-      const wrist = hand[0];
-      const middleMcp = hand[9];
-      const palmSize = Math.max(dist3(wrist, middleMcp), 0.001);
-      const count = countExtendedFingers(hand);
-      return { hand, wrist, palmSize, count };
-    });
-
-    if (handCount === 1) {
-      const primary = handsInfo[0];
-      const lockRemaining = Math.max(0, SELECTION_LOCK_COOLDOWN - (now - this._lastSelectionTime));
-
-      if (primary.count >= 1 && primary.count <= 5) {
-        if (primary.count === this._pendingCount) {
-          this._pendingStreak++;
-        } else {
-          this._pendingCount = primary.count;
-          this._pendingStreak = 1;
-        }
-        if (
-          this._pendingStreak >= STABLE_FRAMES_REQUIRED &&
-          primary.count !== this._lastFingerCount &&
-          lockRemaining <= 0
-        ) {
-          this._lastFingerCount = primary.count;
-          this._lastSelectionTime = now;
-          this._emit(GESTURES.ISOTOPE_SELECTED, { fingerCount: primary.count });
-        }
-      } else {
-        this._pendingCount = null;
-        this._pendingStreak = 0;
-      }
-
-      if (this._isCharging) {
-        this._isCharging = false;
-        this._handsTogetherSince = null;
-        this._emit(GESTURES.CHARGE_CANCEL, {});
-      }
-      this._wasHandsClose = false;
-
-      this._emit(GESTURES.HANDS_UPDATE, {
-        handCount,
-        counts: handsInfo.map(h => h.count),
-        selectedFingerCount: this._lastFingerCount,
-        pendingCount: this._pendingCount,
-        pendingStreak: this._pendingStreak,
-        lockCooldownRemaining: lockRemaining,
-        clapDistance: null,
-        charging: false,
-        chargeProgress: 0,
-      });
-      return;
+    const hand = landmarksList[0];
+    for (const [name, joints] of Object.entries(FINGER_JOINTS)) {
+      const angle = jointAngle(hand[joints.mcp], hand[joints.pip], hand[joints.tip]);
+      const enter = name === 'thumb' ? THUMB_ENTER_ANGLE : FINGER_ENTER_ANGLE;
+      const exit = name === 'thumb' ? THUMB_EXIT_ANGLE : FINGER_EXIT_ANGLE;
+      this._fingerState[name] = this._fingerState[name] ? angle > exit : angle > enter;
     }
 
-    // --- Two+ hands: freeze selection, run charge-hold state machine ---
-    this._pendingCount = null;
-    this._pendingStreak = 0;
+    const { thumb, index, middle, ring, pinky } = this._fingerState;
+    const isFlatPalm = thumb && index && middle && ring && pinky;
+    const isOnePoint = index && !middle && !ring && !pinky; // thumb ignored — ambiguous during natural pointing
 
-    const [a, b] = handsInfo;
-    const avgPalm = (a.palmSize + b.palmSize) / 2;
-    const clapDistance = dist3(a.wrist, b.wrist) / avgPalm;
-    const isClose = clapDistance < CLAP_DISTANCE_RATIO;
-    const midpoint = { x: (a.wrist.x + b.wrist.x) / 2, y: (a.wrist.y + b.wrist.y) / 2 };
+    // --- Palm -> menu toggle ---
+    if (isFlatPalm) {
+      this._palmStreak++;
+      this._notPalmStreak = 0;
+      if (this._palmStreak === PALM_STABLE_FRAMES && !this._menuVisible) {
+        this._menuVisible = true;
+        this._emit(GESTURES.PALM_SHOWN, {});
+      }
+    } else {
+      this._notPalmStreak++;
+      this._palmStreak = 0;
+      if (this._notPalmStreak === PALM_STABLE_FRAMES && this._menuVisible) {
+        this._menuVisible = false;
+        this._emit(GESTURES.PALM_HIDDEN, {});
+      }
+    }
 
-    if (isClose && !this._wasHandsClose && (now - this._lastClapTime) > CLAP_COOLDOWN) {
-      this._handsTogetherSince = now;
+    // --- One-finger charge/fire ---
+    const indexTip = normToScreen(hand[8]);
+
+    if (isOnePoint && !this._wasOnePoint && (now - this._lastClapTime) > CLAP_COOLDOWN) {
+      this._chargeSince = now;
       this._isCharging = true;
-      this._emit(GESTURES.CHARGE_START, { position: normToScreen(midpoint) });
+      this._emit(GESTURES.CHARGE_START, { position: indexTip });
     }
 
-    if (isClose && this._isCharging) {
-      const holdDuration = now - this._handsTogetherSince;
+    if (isOnePoint && this._isCharging) {
+      const holdDuration = now - this._chargeSince;
       const progress = Math.min(1, holdDuration / CHARGE_FULL);
-      this._emit(GESTURES.CHARGING, { position: normToScreen(midpoint), progress, holdDuration });
+      this._emit(GESTURES.CHARGING, { position: indexTip, progress, holdDuration });
     }
 
-    if (!isClose && this._wasHandsClose && this._isCharging) {
-      const holdDuration = now - this._handsTogetherSince;
+    if (!isOnePoint && this._wasOnePoint && this._isCharging) {
+      const holdDuration = now - this._chargeSince;
       this._isCharging = false;
-      this._handsTogetherSince = null;
+      this._chargeSince = null;
       this._lastClapTime = now;
       const tier = holdDuration < CHARGE_TAP_MAX ? 'LOW' : holdDuration < CHARGE_MED_MAX ? 'MED' : 'HIGH';
-      this._emit(GESTURES.CLAP, { position: normToScreen(midpoint), tier, holdDuration });
+      this._emit(GESTURES.CLAP, { position: indexTip, tier, holdDuration });
     }
 
-    this._wasHandsClose = isClose;
+    this._wasOnePoint = isOnePoint;
 
     this._emit(GESTURES.HANDS_UPDATE, {
-      handCount,
-      counts: handsInfo.map(h => h.count),
-      selectedFingerCount: this._lastFingerCount,
-      pendingCount: null,
-      pendingStreak: 0,
-      lockCooldownRemaining: 0,
-      clapDistance: clapDistance.toFixed(2),
+      handVisible: true,
+      fingerState: { ...this._fingerState },
+      isFlatPalm,
+      isOnePoint,
+      menuVisible: this._menuVisible,
       charging: this._isCharging,
-      chargeProgress: this._isCharging ? Math.min(1, (now - this._handsTogetherSince) / CHARGE_FULL) : 0,
+      chargeProgress: this._isCharging ? Math.min(1, (now - this._chargeSince) / CHARGE_FULL) : 0,
     });
   }
 }
 
-function countExtendedFingers(hand) {
-  let count = 0;
-  for (const f of FINGER_JOINTS) {
-    const angle = jointAngle(hand[f.mcp], hand[f.pip], hand[f.tip]);
-    if (angle > FINGER_EXTENDED_ANGLE) count++;
-  }
-  const thumbAngle = jointAngle(hand[THUMB_JOINTS.mcp], hand[THUMB_JOINTS.ip], hand[THUMB_JOINTS.tip]);
-  if (thumbAngle > THUMB_EXTENDED_ANGLE) count++;
-  return count;
-}
-
-/** Angle at point b, between rays b->a and b->c, in radians. */
 function jointAngle(a, b, c) {
   const v1x = a.x - b.x, v1y = a.y - b.y, v1z = a.z - b.z;
   const v2x = c.x - b.x, v2y = c.y - b.y, v2z = c.z - b.z;
@@ -213,10 +173,6 @@ function jointAngle(a, b, c) {
   const m1 = Math.hypot(v1x, v1y, v1z), m2 = Math.hypot(v2x, v2y, v2z);
   const cos = dot / ((m1 * m2) || 1e-6);
   return Math.acos(Math.min(1, Math.max(-1, cos)));
-}
-
-function dist3(a, b) {
-  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
 
 function normToScreen(point) {
