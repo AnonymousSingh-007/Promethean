@@ -9,8 +9,6 @@ const HAND_CONNECTIONS = [
   [0,17],
 ];
 
-const HAND_COLORS = ['#6cf7ff', '#ffb86c']; // distinct color per hand slot in the debug overlay
-
 export class HandTracker {
   constructor(videoEl, debugCanvas = null) {
     this.videoEl = videoEl;
@@ -27,13 +25,16 @@ export class HandTracker {
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
     );
 
+    // Single-hand tracking now — the new gesture set (flat palm / one-finger
+    // point) never needs two hands, and dropping to numHands:1 removes the
+    // whole class of "which hand is primary" ordering bugs from before.
     const options = {
       baseOptions: {
         modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
         delegate: 'GPU',
       },
       runningMode: 'VIDEO',
-      numHands: 2, // both hands — needed for finger-count selection + clap detection
+      numHands: 1,
       minHandDetectionConfidence: 0.5,
       minHandPresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
@@ -92,33 +93,31 @@ export class HandTracker {
     if (landmarksList.length === 0) {
       ctx.fillStyle = '#ff5c5c';
       ctx.font = '14px monospace';
-      ctx.fillText('NO HANDS DETECTED', 10, 20);
+      ctx.fillText('NO HAND DETECTED', 10, 20);
       return;
     }
 
     ctx.fillStyle = '#5cff8f';
     ctx.font = '14px monospace';
-    ctx.fillText(`${landmarksList.length} HAND${landmarksList.length > 1 ? 'S' : ''} DETECTED`, 10, 20);
+    ctx.fillText('HAND DETECTED', 10, 20);
 
-    landmarksList.forEach((hand, handIdx) => {
-      const color = HAND_COLORS[handIdx % HAND_COLORS.length];
-      const pts = hand.map(p => ({ x: (1 - p.x) * w, y: p.y * h }));
+    const hand = landmarksList[0];
+    const pts = hand.map(p => ({ x: (1 - p.x) * w, y: p.y * h }));
 
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      for (const [a, b] of HAND_CONNECTIONS) {
-        ctx.beginPath();
-        ctx.moveTo(pts[a].x, pts[a].y);
-        ctx.lineTo(pts[b].x, pts[b].y);
-        ctx.stroke();
-      }
+    ctx.strokeStyle = '#6cf7ff';
+    ctx.lineWidth = 2;
+    for (const [a, b] of HAND_CONNECTIONS) {
+      ctx.beginPath();
+      ctx.moveTo(pts[a].x, pts[a].y);
+      ctx.lineTo(pts[b].x, pts[b].y);
+      ctx.stroke();
+    }
 
-      ctx.fillStyle = '#ffd76c';
-      for (const p of pts) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    });
+    ctx.fillStyle = '#ffd76c';
+    for (const p of pts) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }
