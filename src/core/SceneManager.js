@@ -3,19 +3,21 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { AtomField } from './AtomField.js';
 
-// 3x3 grid, spaced generously so the neighbor graph (radius 3.5) never lets
-// a cascade cross between isotopes even though only one cluster renders at once.
+// Spacing widened for the bigger (radius 4.2) clusters: center-to-center
+// distance must exceed 2*radius + neighborRadius (~13 units) so the
+// ChainReaction neighbor graph never lets a cascade jump between isotopes.
 const CLUSTER_LAYOUT = {
-  U235:  { x: -14, y:  9, z: 0 },
-  Th232: { x:   0, y:  9, z: 0 },
-  Pu239: { x:  14, y:  9, z: 0 },
-  U238:  { x: -14, y:  0, z: 0 },
-  Cf252: { x:   0, y:  0, z: 0 },
-  Pu241: { x:  14, y:  0, z: 0 },
-  U233:  { x: -14, y: -9, z: 0 },
-  Np237: { x:   0, y: -9, z: 0 },
-  Am241: { x:  14, y: -9, z: 0 },
+  U235:  { x: -18, y:  14, z: 0 },
+  Th232: { x:   0, y:  14, z: 0 },
+  Pu239: { x:  18, y:  14, z: 0 },
+  U238:  { x: -18, y:   0, z: 0 },
+  Cf252: { x:   0, y:   0, z: 0 },
+  Pu241: { x:  18, y:   0, z: 0 },
+  U233:  { x: -18, y: -14, z: 0 },
+  Np237: { x:   0, y: -14, z: 0 },
+  Am241: { x:  18, y: -14, z: 0 },
 };
 
 const CAMERA_LERP = 0.06;
@@ -30,12 +32,12 @@ export class SceneManager {
     this.canvas = canvas;
     this.scene = new THREE.Scene();
     this.scene.background = COOL_BG.clone();
-    this.scene.fog = new THREE.FogExp2(COOL_FOG.getHex(), 0.012);
+    this.scene.fog = new THREE.FogExp2(COOL_FOG.getHex(), 0.01);
 
-    this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
-    this.camera.position.set(-17, 11, 9);
+    this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 250);
+    this.camera.position.set(-22, 17, 12);
     this._camTargetPos = this.camera.position.clone();
-    this._camLookAt = new THREE.Vector3(-14, 9, 0);
+    this._camLookAt = new THREE.Vector3(-18, 14, 0);
     this._camTargetLookAt = this._camLookAt.clone();
     this.camera.lookAt(this._camLookAt);
 
@@ -44,10 +46,10 @@ export class SceneManager {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
 
     this.scene.add(new THREE.AmbientLight(0x404060, 1.0));
-    const key = new THREE.PointLight(0xffffff, 2, 120);
+    const key = new THREE.PointLight(0xffffff, 2, 140);
     key.position.set(5, 10, 15);
     this.scene.add(key);
-    const rim = new THREE.PointLight(0x6cf7ff, 1.2, 100);
+    const rim = new THREE.PointLight(0x6cf7ff, 1.2, 120);
     rim.position.set(-10, -8, -6);
     this.scene.add(rim);
 
@@ -60,8 +62,8 @@ export class SceneManager {
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
 
-    this.atomMeshes = new Map();
-    this.atomVisuals = new Map();
+    this.atomFields = new Map();          // isotopeId -> AtomField
+    this.atomIndexByAtomId = new Map();   // atomId -> { isotopeId, index }
     this.activeIsotopeId = null;
     this._baseBloomStrength = 0.9;
 
@@ -76,13 +78,11 @@ export class SceneManager {
     this.bloomPass.setSize(window.innerWidth, window.innerHeight);
   }
 
-  buildAtomCluster(chainReaction, isotopeId, count, { radius = 3.2, color = 0x7cfc9c } = {}) {
+  buildAtomCluster(chainReaction, isotopeId, count, { radius = 4.2, color = 0x7cfc9c } = {}) {
     const center = CLUSTER_LAYOUT[isotopeId] ?? { x: 0, y: 0, z: 0 };
-    const results = [];
-    const nucleusGeo = new THREE.IcosahedronGeometry(0.16, 2);
-    const ringGeo = new THREE.TorusGeometry(0.34, 0.006, 8, 48);
-
+    const positions = [];
     const golden = Math.PI * (3 - Math.sqrt(5));
+
     for (let i = 0; i < count; i++) {
       const y = 1 - (i / (count - 1)) * 2;
       const r = Math.sqrt(1 - y * y);
@@ -96,52 +96,25 @@ export class SceneManager {
       const worldPos = localPos.clone().add(new THREE.Vector3(center.x, center.y, center.z));
 
       const atom = chainReaction.addAtom({ x: worldPos.x, y: worldPos.y, z: worldPos.z }, isotopeId);
-
-      const group = new THREE.Group();
-      group.position.copy(worldPos);
-      group.visible = false;
-
-      const nucleusMat = new THREE.MeshStandardMaterial({
-        color, emissive: color, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.35,
-      });
-      const nucleus = new THREE.Mesh(nucleusGeo, nucleusMat);
-      nucleus.userData.atomId = atom.id;
-      group.add(nucleus);
-
-      const ringMat = new THREE.MeshBasicMaterial({ color: 0x9fd6ff, transparent: true, opacity: 0.55 });
-      const ring1 = new THREE.Mesh(ringGeo, ringMat);
-      ring1.rotation.set(rand(0.3, 0.9), rand(0, Math.PI), 0);
-      const ring2 = new THREE.Mesh(ringGeo, ringMat.clone());
-      ring2.rotation.set(rand(-0.9, -0.3), rand(0, Math.PI), 0);
-      group.add(ring1, ring2);
-
-      this.scene.add(group);
-      this.atomMeshes.set(atom.id, nucleus);
-      this.atomVisuals.set(atom.id, {
-        group, nucleus, ring1, ring2, isotopeId,
-        alive: true,
-        active: false,
-        phase: Math.random() * Math.PI * 2,
-        spinSpeed1: rand(0.4, 0.9) * (Math.random() < 0.5 ? 1 : -1),
-        spinSpeed2: rand(0.3, 0.7) * (Math.random() < 0.5 ? 1 : -1),
-      });
-
-      results.push({ atom, group, nucleus });
+      this.atomIndexByAtomId.set(atom.id, { isotopeId, index: positions.length });
+      positions.push(worldPos);
     }
-    return results;
+
+    const field = new AtomField(this.scene, positions, color);
+    this.atomFields.set(isotopeId, field);
+    return positions;
   }
 
   setActiveIsotope(isotopeId, { revive = true } = {}) {
     this.activeIsotopeId = isotopeId;
-    for (const visual of this.atomVisuals.values()) {
-      if (visual.isotopeId === isotopeId && revive) visual.alive = true;
-      visual.active = visual.isotopeId === isotopeId;
-      visual.group.visible = visual.active && visual.alive;
+    for (const [id, field] of this.atomFields) {
+      field.setVisible(id === isotopeId);
     }
+    if (revive) this.atomFields.get(isotopeId)?.reviveAll();
 
     const center = CLUSTER_LAYOUT[isotopeId] ?? { x: 0, y: 0, z: 0 };
     this._camTargetLookAt.set(center.x, center.y, center.z);
-    this._camTargetPos.set(center.x - 3, center.y + 2, center.z + 9);
+    this._camTargetPos.set(center.x - 4, center.y + 3, center.z + 12);
   }
 
   setHeat(heat) {
@@ -156,21 +129,9 @@ export class SceneManager {
     this._camLookAt.lerp(this._camTargetLookAt, CAMERA_LERP);
     this.camera.lookAt(this._camLookAt);
 
-    for (const v of this.atomVisuals.values()) {
-      if (!v.group.visible) continue;
-      v.ring1.rotation.z += dt * v.spinSpeed1;
-      v.ring2.rotation.z += dt * v.spinSpeed2;
-      v.nucleus.material.emissiveIntensity = 0.55 + Math.sin(elapsedTime * 2 + v.phase) * 0.18;
-      v.nucleus.scale.setScalar(1 + Math.sin(elapsedTime * 1.5 + v.phase) * 0.03);
+    for (const field of this.atomFields.values()) {
+      field.updateTime(elapsedTime); // O(isotope count), not O(atom count) — the whole point of instancing
     }
-  }
-
-  raycastAtom(ndcX, ndcY) {
-    if (!this._raycaster) this._raycaster = new THREE.Raycaster();
-    this._raycaster.setFromCamera({ x: ndcX, y: ndcY }, this.camera);
-    const meshes = [...this.atomMeshes.values()].filter(m => m.visible);
-    const hits = this._raycaster.intersectObjects(meshes);
-    return hits.length ? hits[0].object.userData.atomId : null;
   }
 
   screenToWorldPoint(ndcX, ndcY, distance = 14) {
@@ -182,10 +143,9 @@ export class SceneManager {
   }
 
   killAtomVisual(atomId) {
-    const visual = this.atomVisuals.get(atomId);
-    if (!visual) return;
-    visual.alive = false;
-    visual.group.visible = visual.active && visual.alive;
+    const ref = this.atomIndexByAtomId.get(atomId);
+    if (!ref) return;
+    this.atomFields.get(ref.isotopeId)?.setAliveAt(ref.index, false);
   }
 
   render() {
