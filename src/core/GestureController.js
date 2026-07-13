@@ -1,23 +1,3 @@
-// Two binary gestures, both far more reliable than counting:
-//
-//   FLAT PALM (all five digits extended, hysteresis-smoothed): toggles the
-//     isotope selection menu. Selection itself happens via keyboard number
-//     keys (see main.js) — the palm just brings up the reference menu, it
-//     doesn't select anything itself, so a missed/late palm detection never
-//     costs you a wrong selection, only a missing helper panel.
-//
-//   ONE FINGER (index extended, everything else curled): hold to charge,
-//     release to fire. Hold duration sets the tier (LOW/MED/HIGH), same idea
-//     as the old two-hand clap-hold, but single-hand and far more reliable
-//     since it's one clean binary shape instead of a two-hand distance/timing
-//     read.
-//
-// Every finger's extended/curled state uses per-finger HYSTERESIS: a finger
-// needs to clear a higher "enter" angle to become extended, but must drop
-// below a lower "exit" angle to become curled again. This kills the flicker
-// that happens when a finger's angle hovers right at a single shared
-// threshold — a real, common failure mode with plain thresholding.
-
 const FINGER_JOINTS = {
   thumb:  { mcp: 2, pip: 3, tip: 4 },
   index:  { mcp: 5, pip: 6, tip: 8 },
@@ -34,9 +14,13 @@ const THUMB_EXIT_ANGLE = (115 * Math.PI) / 180;
 const PALM_STABLE_FRAMES = 4;
 
 const CLAP_COOLDOWN = 0.45;
-const CHARGE_TAP_MAX = 0.15;
-const CHARGE_MED_MAX = 0.6;
-const CHARGE_FULL = 1.0;
+
+// Slower, deeper charge curve with a 4th tier. Holding longer now meaningfully
+// keeps climbing instead of maxing out at "HIGH" after 0.6s.
+const CHARGE_TAP_MAX = 0.2;   // < this -> LOW
+const CHARGE_MED_MAX = 0.8;   // < this -> MED
+const CHARGE_HIGH_MAX = 1.8;  // < this -> HIGH, else -> ULTRA
+const CHARGE_FULL = 2.0;      // visual charge-progress caps here (roughly aligned with the ULTRA threshold)
 
 export const GESTURES = {
   PALM_SHOWN: 'palm_shown',
@@ -44,7 +28,7 @@ export const GESTURES = {
   CHARGE_START: 'charge_start',
   CHARGING: 'charging',
   CHARGE_CANCEL: 'charge_cancel',
-  CLAP: 'clap', // fires on release of the one-finger charge
+  CLAP: 'clap',
   HANDS_UPDATE: 'hands_update',
   HAND_FOUND: 'hand_found',
   HAND_LOST: 'hand_lost',
@@ -109,9 +93,8 @@ export class GestureController {
 
     const { thumb, index, middle, ring, pinky } = this._fingerState;
     const isFlatPalm = thumb && index && middle && ring && pinky;
-    const isOnePoint = index && !middle && !ring && !pinky; // thumb ignored — ambiguous during natural pointing
+    const isOnePoint = index && !middle && !ring && !pinky;
 
-    // --- Palm -> menu toggle ---
     if (isFlatPalm) {
       this._palmStreak++;
       this._notPalmStreak = 0;
@@ -128,7 +111,6 @@ export class GestureController {
       }
     }
 
-    // --- One-finger charge/fire ---
     const indexTip = normToScreen(hand[8]);
 
     if (isOnePoint && !this._wasOnePoint && (now - this._lastClapTime) > CLAP_COOLDOWN) {
@@ -148,7 +130,10 @@ export class GestureController {
       this._isCharging = false;
       this._chargeSince = null;
       this._lastClapTime = now;
-      const tier = holdDuration < CHARGE_TAP_MAX ? 'LOW' : holdDuration < CHARGE_MED_MAX ? 'MED' : 'HIGH';
+      const tier = holdDuration < CHARGE_TAP_MAX ? 'LOW'
+        : holdDuration < CHARGE_MED_MAX ? 'MED'
+        : holdDuration < CHARGE_HIGH_MAX ? 'HIGH'
+        : 'ULTRA';
       this._emit(GESTURES.CLAP, { position: indexTip, tier, holdDuration });
     }
 
