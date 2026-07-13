@@ -1,10 +1,5 @@
 import { defineConfig } from 'vite';
 
-// Dev-only middleware: the browser POSTs gesture events to /api/log, and this
-// prints them straight into the terminal running `npm run dev`. Nothing is
-// written to disk — restart the server and the log is gone, which is exactly
-// what "temporary" logging means here: good for comparing gesture behavior
-// across takes in the same session, not a persistent record.
 function terminalGestureLogger() {
   return {
     name: 'promethean-gesture-logger',
@@ -21,7 +16,7 @@ function terminalGestureLogger() {
             const entry = JSON.parse(body);
             console.log(`[gesture] +${entry.t}ms  ${entry.event}`, entry.payload ?? '');
           } catch {
-            // malformed payload, ignore — this is a debug tool, not a critical path
+            // malformed payload, ignore
           }
           res.statusCode = 204;
           res.end();
@@ -32,6 +27,10 @@ function terminalGestureLogger() {
 }
 
 export default defineConfig({
+  // GitHub Pages serves this repo from /Promethean/, not from the domain
+  // root — base ensures every built <script>/<link>/asset URL is prefixed
+  // correctly. If you ever rename the repo, update this to match.
+  base: '/Promethean/',
   plugins: [terminalGestureLogger()],
   server: {
     host: true,
