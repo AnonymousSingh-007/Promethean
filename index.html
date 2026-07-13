@@ -65,6 +65,40 @@
     .status-retry { cursor: pointer; background: #6cf7ff; color: #05050a; border: none;
                      padding: 10px 22px; border-radius: 6px; font-family: monospace;
                      font-weight: bold; font-size: 13px; }
+
+    #help-reopen-btn {
+      position: fixed; top: 16px; left: 50%; transform: translateX(calc(-50% - 160px));
+      z-index: 7; width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.25);
+      background: rgba(10,10,20,0.6); color: #d7d7ff; font-family: monospace; font-weight: bold;
+      cursor: pointer; pointer-events: auto;
+    }
+    #help-overlay {
+      position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+      background: rgba(3,3,8,0.88); opacity: 0; pointer-events: none; transition: opacity 0.18s ease;
+      padding: 20px;
+    }
+    #help-overlay.visible { opacity: 1; pointer-events: auto; }
+    .help-card {
+      position: relative; max-width: 480px; max-height: 85vh; overflow-y: auto;
+      background: rgba(12,12,22,0.97); border: 1px solid rgba(255,255,255,0.15); border-radius: 14px;
+      padding: 28px 30px; font-family: monospace; color: #d7d7ff;
+    }
+    .help-card h2 { margin: 0 0 4px; font-size: 22px; }
+    .help-sub { margin: 0 0 20px; font-size: 12px; opacity: 0.6; }
+    .help-section { margin-bottom: 18px; }
+    .help-section h3 { margin: 0 0 6px; font-size: 14px; color: #6cf7ff; }
+    .help-section p { margin: 0; font-size: 13px; line-height: 1.5; opacity: 0.9; }
+    .help-section ul { margin: 8px 0 0; padding-left: 18px; font-size: 12px; opacity: 0.85; line-height: 1.7; }
+    .help-close {
+      position: absolute; top: 14px; right: 16px; background: none; border: none;
+      color: #d7d7ff; font-size: 22px; cursor: pointer; opacity: 0.6;
+    }
+    .help-close:hover { opacity: 1; }
+    .help-start {
+      margin-top: 8px; width: 100%; padding: 10px; border-radius: 8px; border: none;
+      background: #6cf7ff; color: #05050a; font-family: monospace; font-weight: bold;
+      font-size: 13px; cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -74,9 +108,11 @@
   <div id="hud"></div>
   <div id="isotope-panel"></div>
   <div id="isotope-menu"></div>
+  <button id="help-reopen-btn">?</button>
   <div id="gesture-debug">waiting for hand tracker…</div>
   <div id="flash-overlay"></div>
   <div id="status-overlay"></div>
+  <div id="help-overlay"></div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
