@@ -9,10 +9,12 @@ import trailFrag from './shaders/trail.frag.glsl?raw';
 import speedlineVert from './shaders/speedline.vert.glsl?raw';
 import speedlineFrag from './shaders/speedline.frag.glsl?raw';
 
-const MAX_BURST_PARTICLES = 4000;
-const MAX_TRAIL_PARTICLES = 800;
-const MAX_SPEEDLINE_SEGMENTS = 1200;
+const MAX_BURST_PARTICLES = 5000;
+const MAX_TRAIL_PARTICLES = 1000;
+const MAX_SPEEDLINE_SEGMENTS = 1500;
+const MAX_LINEAGE_LINES = 1500;
 const FADE_TAIL = 0.15;
+const LINEAGE_LIFETIME = 2.2; // seconds a parent->child lineage line stays visible before fully fading
 
 export class ParticleSystem {
   constructor(scene) {
@@ -24,26 +26,34 @@ export class ParticleSystem {
     this._initTrailSystem();
     this._initTrailLineSystem();
     this._initSpeedLineSystem();
+    this._initLineageSystem();
 
     this._burstCursor = 0;
     this._trailCursor = 0;
     this._speedLineCursor = 0;
+    this._lineageCursor = 0;
+    this._nextLineageId = 0;
     this._activeTrails = new Map();
+    this._activeLineages = new Map();
   }
 
   attachTo(chainReaction, hitStop) {
-    chainReaction.on(EVENTS.NEUTRON_SPAWNED, (e) => this._spawnTrail(e));
+    chainReaction.on(EVENTS.NEUTRON_SPAWNED, (e) => {
+      this._spawnTrail(e);
+      // depth > 0 means this neutron came FROM a fission, not from the user's
+      // hand — draw a lineage line so the parent->child link in the cascade
+      // tree becomes visible, building up a glowing web as the reaction unfolds.
+      if (e.depth > 0) this._spawnLineageLine(e.from, e.to, e.isotopeId);
+    });
 
     chainReaction.on(EVENTS.ATOM_FISSIONED, (e) => {
       const color = ISOTOPES[e.isotopeId]?.color ?? 0xffffff;
       this._spawnBurst(e.position, e.energy, 50, hexToRgbArr(warmTint(color)), [10, 18]);
       this._spawnSpeedLineBurst(e.position, color);
+      this._spawnSplitFragments(e.position);
       hitStop?.trigger({ energy: e.energy });
     });
 
-    // Every hit now gets SOME visual, not just fissions — a small dim isotope-
-    // colored spark on absorb, so the two "safe" isotopes (Th-232, U-238),
-    // which mostly absorb rather than fission, don't sit there silently.
     chainReaction.on(EVENTS.ATOM_ABSORBED, (e) => {
       const color = ISOTOPES[e.isotopeId]?.color ?? 0x888899;
       const rgb = hexToRgb(color);
@@ -98,6 +108,33 @@ export class ParticleSystem {
       startAttr.setX(idx, this.clock.time);
       sizeAttr.setX(idx, sizeRange[0] + Math.random() * (sizeRange[1] - sizeRange[0]));
       colorAttr.setXYZ(idx, color[0], color[1], color[2]);
+    }
+
+    posAttr.needsUpdate = true;
+    velAttr.needsUpdate = true;
+    startAttr.needsUpdate = true;
+    sizeAttr.needsUpdate = true;
+    colorAttr.needsUpdate = true;
+  }
+
+  /** Two bright white fragments flying apart slower than the chaotic burst — a visible "one atom becomes two" cue. */
+  _spawnSplitFragments(position) {
+    const dir = randomOnSphere();
+    const geo = this.burstPoints.geometry;
+    const posAttr = geo.attributes.position;
+    const velAttr = geo.attributes.aVelocity;
+    const startAttr = geo.attributes.aStartTime;
+    const sizeAttr = geo.attributes.aSize;
+    const colorAttr = geo.attributes.aColor;
+
+    for (const sign of [1, -1]) {
+      const idx = this._burstCursor;
+      this._burstCursor = (this._burstCursor + 1) % MAX_BURST_PARTICLES;
+      posAttr.setXYZ(idx, position.x, position.y, position.z);
+      velAttr.setXYZ(idx, dir.x * sign * 1.2, dir.y * sign * 1.2, dir.z * sign * 1.2);
+      startAttr.setX(idx, this.clock.time);
+      sizeAttr.setX(idx, 22);
+      colorAttr.setXYZ(idx, 1, 1, 1);
     }
 
     posAttr.needsUpdate = true;
@@ -164,7 +201,7 @@ export class ParticleSystem {
     });
 
     this.trailPoints.geometry.attributes.aBirth.setX(idx, this.clock.time);
-    this.trailPoints.geometry.attributes.aSize.setX(idx, 14); // bumped up from 10 — bigger, more visible core
+    this.trailPoints.geometry.attributes.aSize.setX(idx, 14);
     this.trailPoints.geometry.attributes.aColor.setXYZ(idx, rgb.r, rgb.g, rgb.b);
     this.trailPoints.geometry.attributes.aTravelTime.setX(idx, travelTime);
   }
@@ -231,6 +268,39 @@ export class ParticleSystem {
     isEndAttr.needsUpdate = true;
   }
 
+  // --- Lineage web: the "watch the chain reaction form" feature ---
+
+  _initLineageSystem() {
+    const geo = new THREE.BufferGeometry();
+    const count = MAX_LINEAGE_LINES * 2;
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const mat = new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.55,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+
+    this.lineageLines = new THREE.LineSegments(geo, mat);
+    this.scene.add(this.lineageLines);
+  }
+
+  _spawnLineageLine(from, to, isotopeId) {
+    const idx = this._lineageCursor;
+    this._lineageCursor = (this._lineageCursor + 1) % MAX_LINEAGE_LINES;
+    const id = this._nextLineageId++;
+    const rgb = hexToRgb(ISOTOPES[isotopeId]?.color ?? 0xffffff);
+
+    this._activeLineages.set(id, { index: idx, spawnTime: this.clock.time, colorArr: [rgb.r, rgb.g, rgb.b] });
+
+    const posAttr = this.lineageLines.geometry.attributes.position;
+    posAttr.setXYZ(idx * 2, from.x, from.y, from.z);
+    posAttr.setXYZ(idx * 2 + 1, to.x, to.y, to.z);
+    posAttr.needsUpdate = true;
+  }
+
   update(dt) {
     this.clock.time += dt;
     this.burstPoints.material.uniforms.uTime.value = this.clock.time;
@@ -250,7 +320,7 @@ export class ParticleSystem {
       }
 
       const rawT = Math.min(1, age / trail.travelTime);
-      const t = 1 - (1 - rawT) * (1 - rawT); // ease-out: fast start, decelerates into the target — emphasizes the impact moment
+      const t = 1 - (1 - rawT) * (1 - rawT);
       const lerped = {
         x: lerp(trail.from.x, trail.to.x, t),
         y: lerp(trail.from.y, trail.to.y, t),
@@ -274,6 +344,24 @@ export class ParticleSystem {
     posAttr.needsUpdate = true;
     linePosAttr.needsUpdate = true;
     lineColorAttr.needsUpdate = true;
+
+    // Lineage web: quick flash-in, then slow fade over LINEAGE_LIFETIME —
+    // recent connections read brighter than older ones, giving the growing
+    // web a natural "recency" gradient as the cascade progresses.
+    const lineageColorAttr = this.lineageLines.geometry.attributes.color;
+    for (const [id, line] of this._activeLineages) {
+      const age = this.clock.time - line.spawnTime;
+      if (age > LINEAGE_LIFETIME) {
+        this._activeLineages.delete(id);
+        continue;
+      }
+      const t = age / LINEAGE_LIFETIME;
+      const fade = t < 0.08 ? t / 0.08 : 1 - (t - 0.08) / (1 - 0.08);
+      const [r, g, b] = line.colorArr;
+      lineageColorAttr.setXYZ(line.index * 2, r * fade, g * fade, b * fade);
+      lineageColorAttr.setXYZ(line.index * 2 + 1, r * fade, g * fade, b * fade);
+    }
+    lineageColorAttr.needsUpdate = true;
   }
 }
 
@@ -297,9 +385,6 @@ function hexToRgbArr(hex) {
   return [c.r, c.g, c.b];
 }
 
-// Fission bursts stay warm/orange regardless of isotope (explosions read as
-// explosions), but nudged slightly toward the isotope's own hue for a subtle
-// per-isotope identity without losing the "hot" feel.
 function warmTint(isotopeHex) {
   const iso = hexToRgb(isotopeHex);
   const warm = { r: 1, g: 0.6, b: 0.3 };
