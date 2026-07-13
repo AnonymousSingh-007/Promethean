@@ -5,9 +5,6 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { AtomField } from './AtomField.js';
 
-// Spacing widened for the bigger (radius 4.2) clusters: center-to-center
-// distance must exceed 2*radius + neighborRadius (~13 units) so the
-// ChainReaction neighbor graph never lets a cascade jump between isotopes.
 const CLUSTER_LAYOUT = {
   U235:  { x: -18, y:  14, z: 0 },
   Th232: { x:   0, y:  14, z: 0 },
@@ -62,8 +59,8 @@ export class SceneManager {
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
 
-    this.atomFields = new Map();          // isotopeId -> AtomField
-    this.atomIndexByAtomId = new Map();   // atomId -> { isotopeId, index }
+    this.atomFields = new Map();
+    this.atomIndexByAtomId = new Map();
     this.activeIsotopeId = null;
     this._baseBloomStrength = 0.9;
 
@@ -130,7 +127,7 @@ export class SceneManager {
     this.camera.lookAt(this._camLookAt);
 
     for (const field of this.atomFields.values()) {
-      field.updateTime(elapsedTime); // O(isotope count), not O(atom count) — the whole point of instancing
+      field.updateTime(elapsedTime);
     }
   }
 
@@ -140,6 +137,20 @@ export class SceneManager {
     const dir = vector.sub(this.camera.position).normalize();
     const pos = this.camera.position.clone().add(dir.multiplyScalar(distance));
     return { x: pos.x, y: pos.y, z: pos.z };
+  }
+
+  /**
+   * The fix: places the neutron/charge-orb origin a fixed FRACTION of the
+   * camera-to-cluster distance in front of the camera (15%), rather than a
+   * hardcoded absolute distance. A hardcoded number (the old approach) broke
+   * the moment the camera/cluster framing changed enough that the fixed
+   * distance no longer stayed in front of the cluster — exactly what happened
+   * here. This scales automatically with whatever the current camera framing is.
+   */
+  getHandOriginPoint(ndcX, ndcY) {
+    const camToTarget = this.camera.position.distanceTo(this._camTargetLookAt);
+    const distance = Math.max(1.5, camToTarget * 0.15);
+    return this.screenToWorldPoint(ndcX, ndcY, distance);
   }
 
   killAtomVisual(atomId) {
