@@ -11,6 +11,7 @@ import { HUD } from './ui/HUD.js';
 import { IsotopePanel } from './ui/IsotopePanel.js';
 import { IsotopeMenu } from './ui/IsotopeMenu.js';
 import { StatusOverlay } from './ui/StatusOverlay.js';
+import { HelpModal } from './ui/HelpModal.js';
 import { playSelectTone, playClapTone } from './utils/Sfx.js';
 
 const canvas = document.getElementById('scene-canvas');
@@ -22,9 +23,11 @@ const isotopeMenuEl = document.getElementById('isotope-menu');
 const gestureDebugEl = document.getElementById('gesture-debug');
 const flashEl = document.getElementById('flash-overlay');
 const statusEl = document.getElementById('status-overlay');
+const helpEl = document.getElementById('help-overlay');
+const helpReopenBtn = document.getElementById('help-reopen-btn');
 
 const sceneManager = new SceneManager(canvas);
-const chainReaction = new ChainReaction({ neighborRadius: 3.5, maxNeighbors: 6 });
+const chainReaction = new ChainReaction({ neighborRadius: 4.6, maxNeighbors: 6 });
 const particles = new ParticleSystem(sceneManager.scene);
 const hitStop = new HitStop(flashEl);
 const chargeEffect = new ChargeEffect(sceneManager.scene);
@@ -32,14 +35,16 @@ const hud = new HUD(hudEl);
 const isotopePanel = new IsotopePanel(isotopePanelEl);
 const isotopeMenu = new IsotopeMenu(isotopeMenuEl);
 const statusOverlay = new StatusOverlay(statusEl);
+const helpModal = new HelpModal(helpEl, helpReopenBtn);
 const gestures = new GestureController();
 const logger = new GestureLogger();
 
 particles.attachTo(chainReaction, hitStop);
 chainReaction.on('atom_fissioned', ({ atomId }) => sceneManager.killAtomVisual(atomId));
 
+// Bigger clusters now that atoms are instanced — 80 vs the old 30.
 for (const isotopeId of Object.keys(ISOTOPES)) {
-  sceneManager.buildAtomCluster(chainReaction, isotopeId, 30, { radius: 3.2, color: ISOTOPES[isotopeId].color });
+  sceneManager.buildAtomCluster(chainReaction, isotopeId, 80, { radius: 4.2, color: ISOTOPES[isotopeId].color });
 }
 chainReaction.buildNeighborGraph();
 
@@ -48,7 +53,7 @@ sceneManager.setActiveIsotope(selectedIsotopeId);
 isotopePanel.show(selectedIsotopeId);
 let lastHandVisible = false;
 
-const TIER_NEUTRON_COUNT = { LOW: 5, MED: 20, HIGH: 50 };
+const TIER_NEUTRON_COUNT = { LOW: 8, MED: 25, HIGH: 55, ULTRA: 110 };
 
 function selectIsotope(isotopeId, keyPressed, source = 'keyboard') {
   if (!isotopeId || isotopeId === selectedIsotopeId) return;
@@ -58,18 +63,17 @@ function selectIsotope(isotopeId, keyPressed, source = 'keyboard') {
   isotopePanel.show(isotopeId);
   playSelectTone(keyPressed - 1);
   logger.log('isotope_selected', { key: keyPressed, isotopeId, source });
-  isotopeMenu.hide(); // confirm-and-close, even if palm is still up
+  isotopeMenu.hide();
 }
 
 function fireClap(position, tier, holdDuration, source = 'gesture') {
-  const count = TIER_NEUTRON_COUNT[tier] ?? 20;
+  const count = TIER_NEUTRON_COUNT[tier] ?? 25;
   const worldOrigin = sceneManager.screenToWorldPoint(position.x, position.y, 14);
   const hitCount = chainReaction.bombardIsotope(selectedIsotopeId, count, worldOrigin);
   playClapTone(count);
   logger.log('clap', { isotopeId: selectedIsotopeId, tier, holdDuration: holdDuration?.toFixed(2), requested: count, neutronsFired: hitCount, source });
 }
 
-// --- Gesture wiring: palm -> menu, one-finger -> charge/fire ---
 gestures.on(GESTURES.PALM_SHOWN, () => isotopeMenu.show());
 gestures.on(GESTURES.PALM_HIDDEN, () => isotopeMenu.hide());
 
@@ -109,7 +113,6 @@ gestures.on(GESTURES.HANDS_UPDATE, (meta) => {
   `;
 });
 
-// --- Hand tracking bootstrap ---
 const handTracker = new HandTracker(video, debugCanvas);
 handTracker.onResults((results) => gestures.update(results.landmarks));
 
@@ -135,19 +138,20 @@ function describeTrackingError(err) {
   return `Hand tracking failed to start (${err.message}). The keyboard controls work fully without it.`;
 }
 
-// --- Keyboard controls: ALWAYS active, not just a fallback ---
-// Number keys are the primary isotope-selection method (see IsotopeMenu.js
-// comment for why). Space/-/= are always-available alternates for firing.
 window.addEventListener('keydown', (e) => {
   const digit = Number(e.key);
   if (digit >= 1 && digit <= 9 && KEY_TO_ISOTOPE[digit]) {
     selectIsotope(KEY_TO_ISOTOPE[digit], digit, 'keyboard');
   }
-  if (e.code === 'Space') { e.preventDefault(); fireClap({ x: 0, y: 0 }, 'MED', 0.4, 'keyboard'); }
-  if (e.key === '-') fireClap({ x: 0, y: 0 }, 'LOW', 0.05, 'keyboard');
-  if (e.key === '=') fireClap({ x: 0, y: 0 }, 'HIGH', 0.9, 'keyboard');
-  if (e.key === 'Tab') { e.preventDefault(); isotopeMenu.el.classList.contains('visible') ? isotopeMenu.hide() : isotopeMenu.show(); }
+  if (e.key === '-') fireClap({ x: 0, y: 0 }, 'LOW', 0.1, 'keyboard');
+  if (e.code === 'Space') { e.preventDefault(); fireClap({ x: 0, y: 0 }, 'MED', 0.5, 'keyboard'); }
+  if (e.key === '=') fireClap({ x: 0, y: 0 }, 'HIGH', 1.2, 'keyboard');
+  if (e.key === '0') fireClap({ x: 0, y: 0 }, 'ULTRA', 2.2, 'keyboard');
+  if (e.key === 'Tab') { e.preventDefault(); isotopeMenuEl.classList.contains('visible') ? isotopeMenu.hide() : isotopeMenu.show(); }
 });
+
+// Show the help modal once on first load.
+helpModal.show();
 
 initTracking();
 
@@ -171,7 +175,7 @@ function animate() {
   particles.update(dt);
   sceneManager.updateAtoms(dt, elapsed);
 
-  const targetHeat = Math.min(1, chainReaction.stats.liveNeutrons / 25);
+  const targetHeat = Math.min(1, chainReaction.stats.liveNeutrons / 30);
   heat += (targetHeat - heat) * Math.min(1, dt * 2.5);
   sceneManager.setHeat(heat);
 
