@@ -2,16 +2,9 @@ import * as THREE from 'three';
 
 const COOL_COLOR = new THREE.Color(0x6cf7ff);
 const HOT_COLOR = new THREE.Color(0xff5c3c);
-const TIER_BURST_SCALE = { LOW: 0.6, MED: 1.1, HIGH: 1.8 };
+const TIER_BURST_SCALE = { LOW: 0.5, MED: 1.0, HIGH: 1.6, ULTRA: 2.4 };
 const RELEASE_DURATION = 0.22;
 
-// A single glowing orb that sits at the midpoint of your hands while charging,
-// growing and shifting from cool blue to hot orange as hold duration
-// approaches the HIGH threshold, then flashes/expands briefly on release.
-// Driven by two inputs: gesture events set a TARGET state, and updateFrame()
-// (called every render frame) smoothly interpolates toward it — this decouples
-// the visual smoothness from MediaPipe's frame rate, which can lag behind the
-// render loop.
 export class ChargeEffect {
   constructor(scene) {
     const geo = new THREE.SphereGeometry(0.35, 24, 24);
