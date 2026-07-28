@@ -15,15 +15,20 @@ export class HUD {
     const genStr = meta.generationCounts && meta.generationCounts.size
       ? [...meta.generationCounts.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c).join(' → ')
       : '—';
+    const modeText = meta.containmentActive ? 'REACTOR (containment ON)' : 'WEAPON (uncontained)';
+    const modeColor = meta.containmentActive ? '#6cf7ff' : '#ff6c6c';
+    const timeScalePct = meta.timeScale != null ? Math.round(meta.timeScale * 100) : 100;
 
     this.el.innerHTML = `
       <div>HANDS VISIBLE: ${meta.handCount ?? 0}</div>
+      <div>MODE: <strong style="color:${modeColor}">${modeText}</strong> <span style="opacity:0.6">(C to toggle)</span></div>
       <div>NEUTRONS LIVE: ${stats.liveNeutrons}</div>
       <div>ATOMS FISSIONED: ${stats.fissioned}</div>
       <div>ATOMS ABSORBED: ${stats.absorbed}</div>
       <div>ENERGY RELEASED: ${stats.energyReleased}</div>
       <div>CASCADE DEPTH: ${stats.maxCascadeDepth}</div>
       <div>GENERATIONS: ${genStr}</div>
+      <div>TIME SCALE: ${timeScalePct}%</div>
       <div style="margin-top:4px;">k_eff: <strong>${stats.kEff ?? '—'}</strong>
         <span style="color:${crit.color}; font-weight:bold;">${crit.text}</span>
       </div>
