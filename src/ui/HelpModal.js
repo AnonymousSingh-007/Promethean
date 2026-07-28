@@ -1,6 +1,3 @@
-// Shown once automatically on load, closeable, and reopenable anytime via the
-// small "?" button. Purely informational — never blocks gestures or keyboard
-// input from working underneath it.
 export class HelpModal {
   constructor(el, reopenButtonEl) {
     this.el = el;
@@ -32,8 +29,13 @@ export class HelpModal {
         </div>
 
         <div class="help-section">
+          <h3>☢️ Weapon vs. Reactor mode</h3>
+          <p>Press <strong>C</strong> to toggle containment. <strong>Weapon mode</strong> (default) lets the reaction run uncontrolled — supercritical isotopes runaway freely. <strong>Reactor mode</strong> simulates a simplified control-rod feedback loop that actively suppresses fission whenever k_eff climbs above 1.0, pulling the reaction back toward a stable, sustained state instead of letting it explode.</p>
+        </div>
+
+        <div class="help-section">
           <h3>⌨️ Keyboard controls</h3>
-          <p><strong>1–9</strong> select isotope · <strong>Tab</strong> toggle menu · <strong>-</strong> small fire · <strong>Space</strong> medium fire · <strong>=</strong> large fire · <strong>0</strong> massive fire</p>
+          <p><strong>1–9</strong> select isotope · <strong>Tab</strong> toggle menu · <strong>C</strong> toggle containment · <strong>-</strong> small fire · <strong>Space</strong> medium fire · <strong>=</strong> large fire · <strong>0</strong> massive fire</p>
         </div>
 
         <button class="help-start">Got it — let's go</button>
