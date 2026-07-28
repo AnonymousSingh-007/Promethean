@@ -179,7 +179,7 @@ function animate() {
   heat += (targetHeat - heat) * Math.min(1, dt * 2.5);
   sceneManager.setHeat(heat);
 
-  hud.update(chainReaction.stats, { handCount: lastHandVisible ? 1 : 0 });
+  hud.update(chainReaction.stats, { handCount: lastHandVisible ? 1 : 0, generationCounts: chainReaction.generationCounts });
 
   sceneManager.render();
 }
