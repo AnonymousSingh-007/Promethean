@@ -23,8 +23,8 @@ export class HUD {
       <div>HANDS VISIBLE: ${meta.handCount ?? 0}</div>
       <div>MODE: <strong style="color:${modeColor}">${modeText}</strong> <span style="opacity:0.6">(C to toggle)</span></div>
       <div>NEUTRONS LIVE: ${stats.liveNeutrons}</div>
-      <div>ATOMS FISSIONED: ${stats.fissioned}</div>
-      <div>ATOMS ABSORBED: ${stats.absorbed}</div>
+      <div>FISSIONED: ${stats.fissioned} · ABSORBED: ${stats.absorbed}</div>
+      <div>SCATTERED: ${stats.scattered} · ESCAPED: ${stats.escaped}</div>
       <div>ENERGY RELEASED: ${stats.energyReleased}</div>
       <div>CASCADE DEPTH: ${stats.maxCascadeDepth}</div>
       <div>GENERATIONS: ${genStr}</div>

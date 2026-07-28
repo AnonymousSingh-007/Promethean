@@ -14,7 +14,7 @@ const MAX_TRAIL_PARTICLES = 1000;
 const MAX_SPEEDLINE_SEGMENTS = 1500;
 const MAX_LINEAGE_LINES = 1500;
 const FADE_TAIL = 0.15;
-const LINEAGE_LIFETIME = 2.2; // seconds a parent->child lineage line stays visible before fully fading
+const LINEAGE_LIFETIME = 2.2;
 
 export class ParticleSystem {
   constructor(scene) {
@@ -40,9 +40,6 @@ export class ParticleSystem {
   attachTo(chainReaction, hitStop) {
     chainReaction.on(EVENTS.NEUTRON_SPAWNED, (e) => {
       this._spawnTrail(e);
-      // depth > 0 means this neutron came FROM a fission, not from the user's
-      // hand — draw a lineage line so the parent->child link in the cascade
-      // tree becomes visible, building up a glowing web as the reaction unfolds.
       if (e.depth > 0) this._spawnLineageLine(e.from, e.to, e.isotopeId);
     });
 
@@ -58,6 +55,12 @@ export class ParticleSystem {
       const color = ISOTOPES[e.isotopeId]?.color ?? 0x888899;
       const rgb = hexToRgb(color);
       this._spawnBurst(e.position, 20, 8, [rgb.r * 0.6, rgb.g * 0.6, rgb.b * 0.6], [4, 7]);
+    });
+
+    chainReaction.on(EVENTS.NEUTRON_SCATTERED, (e) => {
+      const color = ISOTOPES[e.isotopeId]?.color ?? 0xffffff;
+      const rgb = hexToRgb(color);
+      this._spawnBurst(e.position, 10, 4, [rgb.r * 0.6 + 0.4, rgb.g * 0.6 + 0.4, rgb.b * 0.6 + 0.4], [3, 5]);
     });
   }
 
@@ -117,7 +120,6 @@ export class ParticleSystem {
     colorAttr.needsUpdate = true;
   }
 
-  /** Two bright white fragments flying apart slower than the chaotic burst — a visible "one atom becomes two" cue. */
   _spawnSplitFragments(position) {
     const dir = randomOnSphere();
     const geo = this.burstPoints.geometry;
@@ -194,8 +196,6 @@ export class ParticleSystem {
 
     const colorHex = ISOTOPES[isotopeId]?.color ?? 0x9fd6ff;
     const rgb = hexToRgb(colorHex);
-    // Thermal neutrons render dimmer/cooler than fast ones — a direct visual
-    // consequence of the energy-state model, not a separate cosmetic choice.
     const brightness = energyState === 'thermal' ? 0.65 : 1.0;
 
     this._activeTrails.set(id, {
@@ -271,8 +271,6 @@ export class ParticleSystem {
     isEndAttr.needsUpdate = true;
   }
 
-  // --- Lineage web: the "watch the chain reaction form" feature ---
-
   _initLineageSystem() {
     const geo = new THREE.BufferGeometry();
     const count = MAX_LINEAGE_LINES * 2;
@@ -302,6 +300,37 @@ export class ParticleSystem {
     posAttr.setXYZ(idx * 2, from.x, from.y, from.z);
     posAttr.setXYZ(idx * 2 + 1, to.x, to.y, to.z);
     posAttr.needsUpdate = true;
+  }
+
+  /**
+   * Wipes every lingering visual — active trails, the lineage web, and any
+   * still-fading burst/speed-line particles — instantly. Called on isotope
+   * switch so nothing from the previous isotope's cascade bleeds into the
+   * newly selected one. Achieved by pushing every particle's start-time far
+   * into the past (their own fade shaders already read that as "fully
+   * expired," so no shader changes needed) and zeroing the JS-driven color
+   * buffers used by the two line systems.
+   */
+  clearAll() {
+    this._activeTrails.clear();
+    this._activeLineages.clear();
+
+    const past = this.clock.time - 999;
+    this._setAllStartTimesTo(this.burstPoints.geometry.attributes.aStartTime, past);
+    this._setAllStartTimesTo(this.speedLines.geometry.attributes.aStartTime, past);
+    this._setAllStartTimesTo(this.trailPoints.geometry.attributes.aBirth, past);
+    this._zeroColorBuffer(this.trailLines.geometry.attributes.color);
+    this._zeroColorBuffer(this.lineageLines.geometry.attributes.color);
+  }
+
+  _setAllStartTimesTo(attr, value) {
+    for (let i = 0; i < attr.count; i++) attr.setX(i, value);
+    attr.needsUpdate = true;
+  }
+
+  _zeroColorBuffer(attr) {
+    for (let i = 0; i < attr.count; i++) attr.setXYZ(i, 0, 0, 0);
+    attr.needsUpdate = true;
   }
 
   update(dt) {
@@ -348,9 +377,6 @@ export class ParticleSystem {
     linePosAttr.needsUpdate = true;
     lineColorAttr.needsUpdate = true;
 
-    // Lineage web: quick flash-in, then slow fade over LINEAGE_LIFETIME —
-    // recent connections read brighter than older ones, giving the growing
-    // web a natural "recency" gradient as the cascade progresses.
     const lineageColorAttr = this.lineageLines.geometry.attributes.color;
     for (const [id, line] of this._activeLineages) {
       const age = this.clock.time - line.spawnTime;

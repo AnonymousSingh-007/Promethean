@@ -48,18 +48,28 @@ for (const isotopeId of Object.keys(ISOTOPES)) {
 chainReaction.buildNeighborGraph();
 
 let selectedIsotopeId = 'U235';
-sceneManager.setActiveIsotope(selectedIsotopeId);
-isotopePanel.show(selectedIsotopeId);
 let lastHandVisible = false;
 let containmentActive = false;
+let heat = 0; // module-scope now — selectIsotope() needs to reset it, not just animate()
+
+sceneManager.setActiveIsotope(selectedIsotopeId);
+isotopePanel.show(selectedIsotopeId);
 
 const TIER_NEUTRON_COUNT = { LOW: 8, MED: 25, HIGH: 55, ULTRA: 110 };
 
 function selectIsotope(isotopeId, keyPressed, source = 'keyboard') {
   if (!isotopeId || isotopeId === selectedIsotopeId) return;
   selectedIsotopeId = isotopeId;
-  chainReaction.resetIsotope(isotopeId);
-  sceneManager.setActiveIsotope(isotopeId);
+
+  // Full reset — nothing from the previous isotope should carry over.
+  chainReaction.hardReset(isotopeId);       // clears every in-flight neutron + stats, revives new isotope's atoms
+  sceneManager.setActiveIsotope(isotopeId); // swaps active cluster, revives its visual instance-alive flags
+  particles.clearAll();                     // wipes lingering trails/bursts/lineage web
+  hitStop.forceClear();                     // cancels any active freeze/flash
+  chargeEffect.cancel();
+  heat = 0;
+  sceneManager.setHeat(0);                  // snap ambient color back to baseline instantly, no lerp
+
   isotopePanel.show(isotopeId);
   playSelectTone(keyPressed - 1);
   logger.log('isotope_selected', { key: keyPressed, isotopeId, source });
@@ -160,7 +170,6 @@ initTracking();
 
 let lastTime = performance.now();
 let elapsed = 0;
-let heat = 0;
 function animate() {
   requestAnimationFrame(animate);
   const now = performance.now();
@@ -172,12 +181,6 @@ function animate() {
   hitStop.update(dt);
   chargeEffect.updateFrame(dt);
 
-  // Global time dilation: the busier the cascade (more live neutrons), the
-  // more the WHOLE simulation smoothly slows down — this is what replaces
-  // the old "many stacked hit-stop freezes" behavior with a single coherent
-  // bullet-time feeling. Idle atom animation (breathing/spin) deliberately
-  // keeps running at real-time speed below, so only "the action" slows,
-  // not the whole scene.
   const targetHeat = Math.min(1, chainReaction.stats.liveNeutrons / 30);
   heat += (targetHeat - heat) * Math.min(1, dt * 2.5);
   sceneManager.setHeat(heat);
@@ -189,9 +192,9 @@ function animate() {
   if (!hitStop.isFrozen()) {
     chainReaction.step(simDt);
   }
-  particles.update(simDt); // same dt scale as physics, so neutron flight visually stays in sync with when arrivals actually resolve
+  particles.update(simDt);
 
-  sceneManager.updateAtoms(dt, elapsed); // real-time — ambient idle motion doesn't freeze with the action
+  sceneManager.updateAtoms(dt, elapsed);
 
   hud.update(chainReaction.stats, {
     handCount: lastHandVisible ? 1 : 0,

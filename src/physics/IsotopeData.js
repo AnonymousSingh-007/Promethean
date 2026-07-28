@@ -36,55 +36,76 @@
 //     thermal cross-section comes from a low-energy resonance behavior
 //     that doesn't carry over to the fast spectrum.
 
+// Elastic scattering probability, added as a third interaction channel
+// alongside fission/capture. Computed as:
+//   P(scatter) = sigma_scatter / (sigma_scatter + sigma_absorption)
+// using an ASSUMED representative elastic scattering cross-section of 12
+// barns (a typical order-of-magnitude value for heavy actinide nuclei) —
+// this is a documented assumption, not a per-isotope sourced elastic cross
+// section, since precise elastic values aren't something reliably citable
+// from memory the way the absorption/fission values were. sigma_absorption
+// for each isotope is (sigma_fission + sigma_capture) from the thermal
+// citations above.
+//
+// FAST scatter probability is a flat illustrative 0.70 across all isotopes
+// — reflecting the real qualitative fact that fast neutrons overwhelmingly
+// scatter rather than get absorbed on any single collision (which is WHY
+// moderation takes many collisions), not a claim of isotope-specific
+// precision at fast energy.
+
 export const ISOTOPES = {
   U235: {
     id: 'U235', label: 'Uranium-235',
     fissionProbability: { thermal: 0.855, fast: 0.60 },
-    neutronsEmitted: [2, 3], // nu ~2.43 in reality
-    energy: 200, color: 0x7CFC9C,
+    scatterProbability: { thermal: 0.017, fast: 0.70 },
+    neutronsEmitted: [2, 3], energy: 200, color: 0x7CFC9C,
   },
   Th232: {
     id: 'Th232', label: 'Thorium-232',
-    fissionProbability: { thermal: 0.01, fast: 0.12 }, // threshold fissioner — near-inert thermal, meaningfully fissionable fast
+    fissionProbability: { thermal: 0.01, fast: 0.12 },
+    scatterProbability: { thermal: 0.619, fast: 0.70 }, // nearly transparent to thermal neutrons — mostly scatters, rarely absorbs
     neutronsEmitted: [0, 1], energy: 30, color: 0xFFD76C,
   },
   Pu239: {
     id: 'Pu239', label: 'Plutonium-239',
     fissionProbability: { thermal: 0.735, fast: 0.65 },
-    neutronsEmitted: [2, 4], // nu ~2.87
-    energy: 260, color: 0xFF6C6C,
+    scatterProbability: { thermal: 0.012, fast: 0.70 },
+    neutronsEmitted: [2, 4], energy: 260, color: 0xFF6C6C,
   },
   U238: {
     id: 'U238', label: 'Uranium-238',
-    fissionProbability: { thermal: 0.02, fast: 0.07 }, // threshold fissioner, threshold ~1 MeV
+    fissionProbability: { thermal: 0.02, fast: 0.07 },
+    scatterProbability: { thermal: 0.816, fast: 0.70 }, // real U-238 is largely transparent to thermal neutrons
     neutronsEmitted: [0, 1], energy: 60, color: 0x6C8CFF,
   },
   Cf252: {
     id: 'Cf252', label: 'Californium-252',
     fissionProbability: { thermal: 0.97, fast: 0.85 },
-    neutronsEmitted: [3, 5], // nu ~3.7-3.8
-    energy: 320, color: 0xE28CFF,
+    scatterProbability: { thermal: 0.004, fast: 0.70 },
+    neutronsEmitted: [3, 5], energy: 320, color: 0xE28CFF,
   },
   Pu241: {
     id: 'Pu241', label: 'Plutonium-241',
     fissionProbability: { thermal: 0.733, fast: 0.62 },
-    neutronsEmitted: [2, 4], // nu ~2.93
-    energy: 240, color: 0xFF6CD4,
+    scatterProbability: { thermal: 0.0086, fast: 0.70 },
+    neutronsEmitted: [2, 4], energy: 240, color: 0xFF6CD4,
   },
   U233: {
     id: 'U233', label: 'Uranium-233',
     fissionProbability: { thermal: 0.919, fast: 0.70 },
-    neutronsEmitted: [2, 3], // nu ~2.50
-    energy: 210, color: 0x6CFFD4,
+    scatterProbability: { thermal: 0.020, fast: 0.70 },
+    neutronsEmitted: [2, 3], energy: 210, color: 0x6CFFD4,
   },
   Np237: {
     id: 'Np237', label: 'Neptunium-237',
-    fissionProbability: { thermal: 0.02, fast: 0.25 }, // threshold fissioner, threshold ~0.4 MeV
+    fissionProbability: { thermal: 0.02, fast: 0.25 },
+    scatterProbability: { thermal: 0.0625, fast: 0.70 },
     neutronsEmitted: [1, 3], energy: 150, color: 0xFFA85C,
   },
   Am241: {
     id: 'Am241', label: 'Americium-241',
-    fissionProbability: { thermal: 0.0047, fast: 0.10 }, // primarily an alpha emitter — near-inert at both energies
+    fissionProbability: { thermal: 0.0047, fast: 0.10 },
+    scatterProbability: { thermal: 0.0172, fast: 0.70 },
     neutronsEmitted: [0, 1], energy: 15, color: 0xB0B0C8,
   },
 };
