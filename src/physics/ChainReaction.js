@@ -58,6 +58,7 @@ export class ChainReaction {
     this._activeCascadeDepth = 0;
     this._depthByNeutron = new Map();
     this.generationCounts = new Map(); // depth -> neutrons born at that depth, current cascade only
+    this.containmentActive = false;
   }
 
   on(event, cb) {
@@ -98,6 +99,20 @@ export class ChainReaction {
     for (const atom of this.atoms.values()) {
       if (atom.isotopeId === isotopeId) atom.alive = true;
     }
+  }
+
+  /**
+   * Simplified proportional negative-feedback controller, standing in for
+   * control-rod insertion — NOT a literal rod-worth/insertion-depth model.
+   * The more k_eff overshoots 1.0, the more strongly fission gets
+   * suppressed, pulling the reaction back toward steady-state (k_eff ~ 1)
+   * instead of letting it run away. This is the real conceptual basis of
+   * how a reactor's control system behaves, simplified to a single
+   * proportional term rather than a full PID controller with rod-position
+   * dynamics, xenon poisoning, thermal feedback, etc.
+   */
+  setContainment(active) {
+    this.containmentActive = active;
   }
 
   strikeAtom(atomId, { origin = null, depth = 0 } = {}) {
@@ -207,7 +222,15 @@ export class ChainReaction {
     this._emit(EVENTS.ATOM_HIT, { atomId: atom.id, position: atom.position, isotopeId: atom.isotopeId, depth, energyState });
 
     const iso = getIsotope(atom.isotopeId);
-    const pFission = iso.fissionProbability[energyState] ?? iso.fissionProbability.thermal;
+    let pFission = iso.fissionProbability[energyState] ?? iso.fissionProbability.thermal;
+
+    if (this.containmentActive) {
+      const kEffNow = this.stats.kEff ?? 1;
+      const excess = Math.max(0, kEffNow - 1.0);
+      const suppression = Math.min(0.9, excess * 0.6);
+      pFission *= (1 - suppression);
+    }
+
     const fissioned = Math.random() < pFission;
 
     if (!fissioned) {
