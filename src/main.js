@@ -42,7 +42,6 @@ const logger = new GestureLogger();
 particles.attachTo(chainReaction, hitStop);
 chainReaction.on('atom_fissioned', ({ atomId }) => sceneManager.killAtomVisual(atomId));
 
-// Bigger clusters now that atoms are instanced — 80 vs the old 30.
 for (const isotopeId of Object.keys(ISOTOPES)) {
   sceneManager.buildAtomCluster(chainReaction, isotopeId, 80, { radius: 4.2, color: ISOTOPES[isotopeId].color });
 }
@@ -52,6 +51,7 @@ let selectedIsotopeId = 'U235';
 sceneManager.setActiveIsotope(selectedIsotopeId);
 isotopePanel.show(selectedIsotopeId);
 let lastHandVisible = false;
+let containmentActive = false;
 
 const TIER_NEUTRON_COUNT = { LOW: 8, MED: 25, HIGH: 55, ULTRA: 110 };
 
@@ -68,7 +68,7 @@ function selectIsotope(isotopeId, keyPressed, source = 'keyboard') {
 
 function fireClap(position, tier, holdDuration, source = 'gesture') {
   const count = TIER_NEUTRON_COUNT[tier] ?? 25;
-  const worldOrigin = sceneManager.screenToWorldPoint(position.x, position.y, 14);
+  const worldOrigin = sceneManager.getHandOriginPoint(position.x, position.y);
   const hitCount = chainReaction.bombardIsotope(selectedIsotopeId, count, worldOrigin);
   playClapTone(count);
   logger.log('clap', { isotopeId: selectedIsotopeId, tier, holdDuration: holdDuration?.toFixed(2), requested: count, neutronsFired: hitCount, source });
@@ -78,12 +78,12 @@ gestures.on(GESTURES.PALM_SHOWN, () => isotopeMenu.show());
 gestures.on(GESTURES.PALM_HIDDEN, () => isotopeMenu.hide());
 
 gestures.on(GESTURES.CHARGE_START, ({ position }) => {
-  const worldPos = sceneManager.screenToWorldPoint(position.x, position.y, 10);
+  const worldPos = sceneManager.getHandOriginPoint(position.x, position.y);
   chargeEffect.setCharging(worldPos, 0);
 });
 
 gestures.on(GESTURES.CHARGING, ({ position, progress }) => {
-  const worldPos = sceneManager.screenToWorldPoint(position.x, position.y, 10);
+  const worldPos = sceneManager.getHandOriginPoint(position.x, position.y);
   chargeEffect.setCharging(worldPos, progress);
 });
 
@@ -148,11 +148,14 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '=') fireClap({ x: 0, y: 0 }, 'HIGH', 1.2, 'keyboard');
   if (e.key === '0') fireClap({ x: 0, y: 0 }, 'ULTRA', 2.2, 'keyboard');
   if (e.key === 'Tab') { e.preventDefault(); isotopeMenuEl.classList.contains('visible') ? isotopeMenu.hide() : isotopeMenu.show(); }
+  if (e.key === 'c' || e.key === 'C') {
+    containmentActive = !containmentActive;
+    chainReaction.setContainment(containmentActive);
+    logger.log('containment_toggled', { active: containmentActive });
+  }
 });
 
-// Show the help modal once on first load.
 helpModal.show();
-
 initTracking();
 
 let lastTime = performance.now();
@@ -169,17 +172,33 @@ function animate() {
   hitStop.update(dt);
   chargeEffect.updateFrame(dt);
 
-  if (!hitStop.isFrozen()) {
-    chainReaction.step(dt);
-  }
-  particles.update(dt);
-  sceneManager.updateAtoms(dt, elapsed);
-
+  // Global time dilation: the busier the cascade (more live neutrons), the
+  // more the WHOLE simulation smoothly slows down — this is what replaces
+  // the old "many stacked hit-stop freezes" behavior with a single coherent
+  // bullet-time feeling. Idle atom animation (breathing/spin) deliberately
+  // keeps running at real-time speed below, so only "the action" slows,
+  // not the whole scene.
   const targetHeat = Math.min(1, chainReaction.stats.liveNeutrons / 30);
   heat += (targetHeat - heat) * Math.min(1, dt * 2.5);
   sceneManager.setHeat(heat);
+  hitStop.setHeat(heat);
 
-  hud.update(chainReaction.stats, { handCount: lastHandVisible ? 1 : 0, generationCounts: chainReaction.generationCounts });
+  const timeScale = 1 - heat * 0.75;
+  const simDt = dt * timeScale;
+
+  if (!hitStop.isFrozen()) {
+    chainReaction.step(simDt);
+  }
+  particles.update(simDt); // same dt scale as physics, so neutron flight visually stays in sync with when arrivals actually resolve
+
+  sceneManager.updateAtoms(dt, elapsed); // real-time — ambient idle motion doesn't freeze with the action
+
+  hud.update(chainReaction.stats, {
+    handCount: lastHandVisible ? 1 : 0,
+    generationCounts: chainReaction.generationCounts,
+    containmentActive,
+    timeScale,
+  });
 
   sceneManager.render();
 }
