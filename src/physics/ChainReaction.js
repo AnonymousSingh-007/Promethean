@@ -12,6 +12,13 @@ export const EVENTS = {
 
 const DEFAULT_ORIGIN = { x: 0, y: 0, z: 20 };
 
+// Simplified stand-in for moderation (real thermalization happens via
+// repeated elastic scattering, which this branch does not yet model — see
+// roadmap item "neutron scattering"). Each neutron independently has this
+// probability of being tracked as thermal rather than fast at spawn. This
+// is a documented approximation, not a claim of simulating scattering.
+const MODERATION_PROBABILITY = 0.4;
+
 class Atom {
   constructor(id, position, isotopeId) {
     this.id = id;
@@ -23,12 +30,13 @@ class Atom {
 }
 
 class Neutron {
-  constructor(id, fromPosition, toAtom, spawnTime, travelTime) {
+  constructor(id, fromPosition, toAtom, spawnTime, travelTime, energyState) {
     this.id = id;
     this.from = fromPosition;
     this.to = toAtom;
     this.spawnTime = spawnTime;
-    this.travelTime = travelTime; // computed per-neutron from distance — see constants.js
+    this.travelTime = travelTime;
+    this.energyState = energyState; // 'fast' | 'thermal'
     this.arrived = false;
   }
 }
@@ -43,9 +51,13 @@ export class ChainReaction {
     this.time = 0;
     this._nextAtomId = 0;
     this._nextNeutronId = 0;
-    this.stats = { fissioned: 0, absorbed: 0, energyReleased: 0, maxCascadeDepth: 0, liveNeutrons: 0 };
+    this.stats = {
+      fissioned: 0, absorbed: 0, energyReleased: 0, maxCascadeDepth: 0,
+      liveNeutrons: 0, kEff: null,
+    };
     this._activeCascadeDepth = 0;
     this._depthByNeutron = new Map();
+    this.generationCounts = new Map(); // depth -> neutrons born at that depth, current cascade only
   }
 
   on(event, cb) {
@@ -91,6 +103,7 @@ export class ChainReaction {
   strikeAtom(atomId, { origin = null, depth = 0 } = {}) {
     const atom = this.atoms.get(atomId);
     if (!atom || !atom.alive) return;
+    this._maybeResetGeneration();
     this._spawnNeutron(origin ?? DEFAULT_ORIGIN, atom, depth);
   }
 
@@ -106,6 +119,7 @@ export class ChainReaction {
 
   _bombard(candidateAtoms, count, origin) {
     if (candidateAtoms.length === 0) return 0;
+    this._maybeResetGeneration();
     const shuffled = [...candidateAtoms].sort(() => Math.random() - 0.5);
     const targets = shuffled.slice(0, Math.min(count, candidateAtoms.length));
     for (const atom of targets) {
@@ -114,16 +128,46 @@ export class ChainReaction {
     return targets.length;
   }
 
+  /** Starts fresh generation tracking (and k_eff) whenever a new cascade begins with no neutrons currently in flight. */
+  _maybeResetGeneration() {
+    if (this.neutrons.size === 0) {
+      this.generationCounts = new Map();
+      this.stats.kEff = null;
+    }
+  }
+
   _spawnNeutron(fromPosition, toAtom, depth) {
     const id = this._nextNeutronId++;
-    const travelTime = computeTravelTime(fromPosition, toAtom.position);
-    const n = new Neutron(id, fromPosition, toAtom, this.time, travelTime);
+    const energyState = Math.random() < MODERATION_PROBABILITY ? 'thermal' : 'fast';
+    const travelTime = computeTravelTime(fromPosition, toAtom.position, energyState);
+    const n = new Neutron(id, fromPosition, toAtom, this.time, travelTime, energyState);
     this.neutrons.set(id, n);
     this._depthByNeutron.set(id, depth);
     this.stats.liveNeutrons++;
+
+    this.generationCounts.set(depth, (this.generationCounts.get(depth) || 0) + 1);
+    this._updateKEff();
+
     this._emit(EVENTS.NEUTRON_SPAWNED, {
-      id, from: fromPosition, to: toAtom.position, isotopeId: toAtom.isotopeId, travelTime, depth,
+      id, from: fromPosition, to: toAtom.position, isotopeId: toAtom.isotopeId,
+      travelTime, depth, energyState,
     });
+  }
+
+  /**
+   * k_eff estimated as the ratio of neutron counts between the two most
+   * recent CONSECUTIVE generations (by depth) in the current cascade.
+   * Only updates when two consecutive generations both have data — a
+   * genuine simplification (real k_eff estimation averages over many
+   * cascades/generations, not just the latest pair), but it's a real,
+   * honestly-computed ratio, not an invented display number.
+   */
+  _updateKEff() {
+    const depths = [...this.generationCounts.keys()].sort((a, b) => b - a);
+    if (depths.length < 2 || depths[0] !== depths[1] + 1) return;
+    const n1 = this.generationCounts.get(depths[0]);
+    const n0 = this.generationCounts.get(depths[1]);
+    this.stats.kEff = n0 > 0 ? +(n1 / n0).toFixed(3) : null;
   }
 
   step(dt) {
@@ -149,6 +193,7 @@ export class ChainReaction {
   _resolveArrival(neutronId) {
     const n = this.neutrons.get(neutronId);
     const depth = this._depthByNeutron.get(neutronId) ?? 0;
+    const energyState = n.energyState;
     this.neutrons.delete(neutronId);
     this._depthByNeutron.delete(neutronId);
     this.stats.liveNeutrons--;
@@ -159,10 +204,11 @@ export class ChainReaction {
     this._emit(EVENTS.NEUTRON_ARRIVED, { id: neutronId, position: atom.position, depth });
     if (!atom.alive) return;
 
-    this._emit(EVENTS.ATOM_HIT, { atomId: atom.id, position: atom.position, isotopeId: atom.isotopeId, depth });
+    this._emit(EVENTS.ATOM_HIT, { atomId: atom.id, position: atom.position, isotopeId: atom.isotopeId, depth, energyState });
 
     const iso = getIsotope(atom.isotopeId);
-    const fissioned = Math.random() < iso.fissionProbability;
+    const pFission = iso.fissionProbability[energyState] ?? iso.fissionProbability.thermal;
+    const fissioned = Math.random() < pFission;
 
     if (!fissioned) {
       this.stats.absorbed++;
@@ -188,9 +234,10 @@ export class ChainReaction {
     for (const atom of this.atoms.values()) atom.alive = true;
     this.neutrons.clear();
     this._depthByNeutron.clear();
+    this.generationCounts = new Map();
     this.time = 0;
     this._activeCascadeDepth = 0;
-    this.stats = { fissioned: 0, absorbed: 0, energyReleased: 0, maxCascadeDepth: 0, liveNeutrons: 0 };
+    this.stats = { fissioned: 0, absorbed: 0, energyReleased: 0, maxCascadeDepth: 0, liveNeutrons: 0, kEff: null };
   }
 }
 

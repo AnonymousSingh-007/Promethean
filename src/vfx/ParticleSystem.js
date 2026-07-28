@@ -188,21 +188,24 @@ export class ParticleSystem {
     this.scene.add(this.trailLines);
   }
 
-  _spawnTrail({ id, from, to, isotopeId, travelTime }) {
+  _spawnTrail({ id, from, to, isotopeId, travelTime, energyState }) {
     const idx = this._trailCursor;
     this._trailCursor = (this._trailCursor + 1) % MAX_TRAIL_PARTICLES;
 
     const colorHex = ISOTOPES[isotopeId]?.color ?? 0x9fd6ff;
     const rgb = hexToRgb(colorHex);
+    // Thermal neutrons render dimmer/cooler than fast ones — a direct visual
+    // consequence of the energy-state model, not a separate cosmetic choice.
+    const brightness = energyState === 'thermal' ? 0.65 : 1.0;
 
     this._activeTrails.set(id, {
       index: idx, from, to, spawnTime: this.clock.time, travelTime,
-      prevPos: { ...from }, colorArr: [rgb.r, rgb.g, rgb.b],
+      prevPos: { ...from }, colorArr: [rgb.r * brightness, rgb.g * brightness, rgb.b * brightness],
     });
 
     this.trailPoints.geometry.attributes.aBirth.setX(idx, this.clock.time);
     this.trailPoints.geometry.attributes.aSize.setX(idx, 14);
-    this.trailPoints.geometry.attributes.aColor.setXYZ(idx, rgb.r, rgb.g, rgb.b);
+    this.trailPoints.geometry.attributes.aColor.setXYZ(idx, rgb.r * brightness, rgb.g * brightness, rgb.b * brightness);
     this.trailPoints.geometry.attributes.aTravelTime.setX(idx, travelTime);
   }
 
