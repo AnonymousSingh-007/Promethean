@@ -41,13 +41,14 @@ class Atom {
 }
 
 class Neutron {
-  constructor(id, fromPosition, toAtom, spawnTime, travelTime, energyState) {
+  constructor(id, fromPosition, toAtom, spawnTime, travelTime, energyState, scatterCount = 0) {
     this.id = id;
     this.from = fromPosition;
     this.to = toAtom;
     this.spawnTime = spawnTime;
     this.travelTime = travelTime;
-    this.energyState = energyState; // 'fast' | 'thermal'
+    this.energyState = energyState;
+    this.scatterCount = scatterCount;
     this.arrived = false;
   }
 }
@@ -180,10 +181,10 @@ export class ChainReaction {
    * counts that k_eff is computed from. Only genuine fission-spawned or
    * initial user-fired neutrons count as new births.
    */
-  _spawnNeutron(fromPosition, toAtom, depth, { energyState = 'fast', countAsNewBirth = true } = {}) {
+  _spawnNeutron(fromPosition, toAtom, depth, { energyState = 'fast', countAsNewBirth = true, scatterCount = 0 } = {}) {
     const id = this._nextNeutronId++;
     const travelTime = computeTravelTime(fromPosition, toAtom.position, energyState);
-    const n = new Neutron(id, fromPosition, toAtom, this.time, travelTime, energyState);
+    const n = new Neutron(id, fromPosition, toAtom, this.time, travelTime, energyState, scatterCount);
     this.neutrons.set(id, n);
     this._depthByNeutron.set(id, depth);
     this.stats.liveNeutrons++;
@@ -231,6 +232,7 @@ export class ChainReaction {
     const n = this.neutrons.get(neutronId);
     const depth = this._depthByNeutron.get(neutronId) ?? 0;
     const energyState = n.energyState;
+    const scatterCount = n.scatterCount;
     this.neutrons.delete(neutronId);
     this._depthByNeutron.delete(neutronId);
     this.stats.liveNeutrons--;
@@ -242,6 +244,14 @@ export class ChainReaction {
     if (!atom.alive) return;
 
     this._emit(EVENTS.ATOM_HIT, { atomId: atom.id, position: atom.position, isotopeId: atom.isotopeId, depth, energyState });
+
+    // Bounced too many times — treat as leakage out of the finite geometry
+    // rather than letting it bounce indefinitely.
+    if (scatterCount >= MAX_SCATTERS_PER_NEUTRON) {
+      this.stats.escaped++;
+      this._emit(EVENTS.NEUTRON_ESCAPED, { atomId: atom.id, position: atom.position, isotopeId: atom.isotopeId, depth });
+      return;
+    }
 
     const iso = getIsotope(atom.isotopeId);
 
@@ -262,7 +272,11 @@ export class ChainReaction {
         ? 'thermal' : energyState;
 
       this._emit(EVENTS.NEUTRON_SCATTERED, { atomId: atom.id, position: atom.position, isotopeId: atom.isotopeId, depth });
-      this._spawnNeutron(atom.position, newTarget, depth, { energyState: newEnergyState, countAsNewBirth: false });
+      this._spawnNeutron(atom.position, newTarget, depth, {
+        energyState: newEnergyState,
+        countAsNewBirth: false,
+        scatterCount: scatterCount + 1,
+      });
       return;
     }
 
