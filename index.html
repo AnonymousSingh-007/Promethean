@@ -3,46 +3,45 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Promethean</title>
+  <title>Promethean · Nuclear Reactor Simulator</title>
   <style>
-    html, body { margin: 0; padding: 0; overflow: hidden; background: #05050a; height: 100%; }
+    html, body { margin: 0; padding: 0; overflow: hidden; background: #05050a; height: 100%; font-family: monospace; }
     #scene-canvas { position: fixed; inset: 0; z-index: 1; }
 
-    #webcam-video { position: fixed; bottom: 16px; right: 16px; width: 220px; border-radius: 8px;
-                     opacity: 0.6; transform: scaleX(-1); z-index: 3; pointer-events: none; }
-    #debug-canvas { position: fixed; bottom: 16px; right: 16px; width: 220px; height: 165px;
+    #webcam-video { position: fixed; bottom: 180px; right: 16px; width: 180px; border-radius: 8px;
+                     opacity: 0.55; transform: scaleX(-1); z-index: 3; pointer-events: none; }
+    #debug-canvas { position: fixed; bottom: 180px; right: 16px; width: 180px; height: 135px;
                      border-radius: 8px; z-index: 4; pointer-events: none; }
-    #hud { position: fixed; top: 16px; left: 16px; color: #d7d7ff; font-family: monospace;
-           font-size: 12px; z-index: 4; pointer-events: none; }
-    #gesture-debug { position: fixed; top: 16px; right: 16px; color: #6cf7ff; font-family: monospace;
-                      font-size: 12px; z-index: 4; pointer-events: none; text-align: right;
-                      background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; min-width: 220px; }
+
+    #gesture-debug { position: fixed; top: 16px; right: 16px; color: #6cf7ff; font-size: 12px;
+                      z-index: 4; pointer-events: none; text-align: right;
+                      background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; min-width: 200px; }
     #flash-overlay { position: fixed; inset: 0; background: white; opacity: 0; pointer-events: none; z-index: 10; }
 
     #isotope-panel {
       position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
       min-width: 260px; text-align: center; z-index: 5; pointer-events: none;
-      background: rgba(10,10,20,0.6); border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 10px; padding: 10px 20px; font-family: monospace; color: #d7d7ff;
+      background: rgba(10,10,20,0.7); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px; padding: 10px 20px; color: #d7d7ff;
     }
     .isotope-panel-title { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
     .isotope-panel-row { font-size: 12px; opacity: 0.85; }
     @keyframes confirmPulse {
-      0%   { box-shadow: 0 0 0px rgba(255,255,255,0);   border-color: rgba(255,255,255,0.15); }
+      0%   { box-shadow: 0 0 0px rgba(255,255,255,0);    border-color: rgba(255,255,255,0.15); }
       30%  { box-shadow: 0 0 26px rgba(255,255,255,0.55); border-color: rgba(255,255,255,0.85); }
-      100% { box-shadow: 0 0 0px rgba(255,255,255,0);   border-color: rgba(255,255,255,0.15); }
+      100% { box-shadow: 0 0 0px rgba(255,255,255,0);    border-color: rgba(255,255,255,0.15); }
     }
     .confirm-pulse { animation: confirmPulse 0.5s ease-out; }
 
     #isotope-menu {
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95);
       z-index: 6; pointer-events: none; opacity: 0; transition: opacity 0.15s ease, transform 0.15s ease;
-      background: rgba(8,8,16,0.88); border: 1px solid rgba(255,255,255,0.18); border-radius: 12px;
-      padding: 16px 22px; font-family: monospace; color: #d7d7ff; min-width: 280px;
+      background: rgba(8,8,16,0.92); border: 1px solid rgba(255,255,255,0.18); border-radius: 12px;
+      padding: 16px 22px; color: #d7d7ff; min-width: 300px;
     }
     #isotope-menu.visible { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-    .menu-title { font-size: 13px; letter-spacing: 0.1em; opacity: 0.6; margin-bottom: 10px; text-align: center; }
-    .menu-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 13px; }
+    .menu-title { font-size: 12px; letter-spacing: 0.1em; opacity: 0.6; margin-bottom: 10px; text-align: center; }
+    .menu-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 12px; }
     .menu-key { width: 18px; height: 18px; border-radius: 4px; background: rgba(255,255,255,0.12);
                  display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 11px; }
     .menu-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
@@ -50,11 +49,35 @@
     .menu-pct { opacity: 0.6; font-size: 11px; }
     .menu-hint { margin-top: 10px; font-size: 11px; opacity: 0.5; text-align: center; }
 
+    /* Instrument panel — bottom of screen, full width */
+    #instrument-panel {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
+      background: rgba(6,8,14,0.92); border-top: 1px solid rgba(108,247,255,0.2);
+      padding: 10px 16px; color: #d7d7ff;
+    }
+    .panel-row { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 6px; }
+    .panel-row:last-child { margin-bottom: 0; }
+    .panel-block { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+                    border-radius: 6px; padding: 6px 10px; min-width: 90px; }
+    .panel-block.wide { flex: 1; }
+    .panel-block.fullwidth { flex: 1; }
+    .panel-label { font-size: 9px; letter-spacing: 0.1em; opacity: 0.55; margin-bottom: 3px; text-transform: uppercase; }
+    .panel-sublabel { font-size: 9px; opacity: 0.4; margin-top: 2px; }
+    .panel-value { font-size: 14px; font-weight: bold; color: #6cf7ff; }
+    .panel-value.mono { font-size: 11px; font-weight: normal; letter-spacing: 0.05em; word-break: break-all; }
+    #panel-sparkline { display: block; width: 100%; }
+
+    #help-reopen-btn {
+      position: fixed; top: 16px; left: 50%; transform: translateX(calc(-50% - 160px));
+      z-index: 7; width: 28px; height: 28px; border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.25); background: rgba(10,10,20,0.6);
+      color: #d7d7ff; font-weight: bold; cursor: pointer; pointer-events: auto;
+    }
+
     #status-overlay {
       position: fixed; inset: 0; z-index: 20; display: none; flex-direction: column;
       align-items: center; justify-content: center; gap: 16px;
-      background: rgba(5,5,10,0.94); color: #d7d7ff; font-family: monospace;
-      text-align: center; padding: 24px;
+      background: rgba(5,5,10,0.94); color: #d7d7ff; text-align: center; padding: 24px;
     }
     .status-spinner { width: 42px; height: 42px; border-radius: 50%;
                         border: 3px solid rgba(108,247,255,0.2); border-top-color: #6cf7ff;
@@ -63,53 +86,41 @@
     .status-message { font-size: 14px; max-width: 420px; line-height: 1.5; }
     .status-error { color: #ff8c8c; }
     .status-retry { cursor: pointer; background: #6cf7ff; color: #05050a; border: none;
-                     padding: 10px 22px; border-radius: 6px; font-family: monospace;
-                     font-weight: bold; font-size: 13px; }
+                     padding: 10px 22px; border-radius: 6px; font-weight: bold; font-size: 13px; }
 
-    #help-reopen-btn {
-      position: fixed; top: 16px; left: 50%; transform: translateX(calc(-50% - 160px));
-      z-index: 7; width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.25);
-      background: rgba(10,10,20,0.6); color: #d7d7ff; font-family: monospace; font-weight: bold;
-      cursor: pointer; pointer-events: auto;
-    }
     #help-overlay {
-      position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
-      background: rgba(3,3,8,0.88); opacity: 0; pointer-events: none; transition: opacity 0.18s ease;
-      padding: 20px;
+      position: fixed; inset: 0; z-index: 30; display: flex; align-items: center;
+      justify-content: center; background: rgba(3,3,8,0.9); opacity: 0; pointer-events: none;
+      transition: opacity 0.18s ease; padding: 20px;
     }
     #help-overlay.visible { opacity: 1; pointer-events: auto; }
     .help-card {
-      position: relative; max-width: 480px; max-height: 85vh; overflow-y: auto;
-      background: rgba(12,12,22,0.97); border: 1px solid rgba(255,255,255,0.15); border-radius: 14px;
-      padding: 28px 30px; font-family: monospace; color: #d7d7ff;
+      position: relative; max-width: 520px; max-height: 88vh; overflow-y: auto;
+      background: rgba(12,12,22,0.98); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 14px; padding: 28px 30px; color: #d7d7ff;
     }
     .help-card h2 { margin: 0 0 4px; font-size: 22px; }
     .help-sub { margin: 0 0 20px; font-size: 12px; opacity: 0.6; }
     .help-section { margin-bottom: 18px; }
     .help-section h3 { margin: 0 0 6px; font-size: 14px; color: #6cf7ff; }
-    .help-section p { margin: 0; font-size: 13px; line-height: 1.5; opacity: 0.9; }
+    .help-section p { margin: 0; font-size: 13px; line-height: 1.55; opacity: 0.9; }
     .help-section ul { margin: 8px 0 0; padding-left: 18px; font-size: 12px; opacity: 0.85; line-height: 1.7; }
-    .help-close {
-      position: absolute; top: 14px; right: 16px; background: none; border: none;
-      color: #d7d7ff; font-size: 22px; cursor: pointer; opacity: 0.6;
-    }
+    .help-close { position: absolute; top: 14px; right: 16px; background: none; border: none;
+                    color: #d7d7ff; font-size: 22px; cursor: pointer; opacity: 0.6; }
     .help-close:hover { opacity: 1; }
-    .help-start {
-      margin-top: 8px; width: 100%; padding: 10px; border-radius: 8px; border: none;
-      background: #6cf7ff; color: #05050a; font-family: monospace; font-weight: bold;
-      font-size: 13px; cursor: pointer;
-    }
+    .help-start { margin-top: 8px; width: 100%; padding: 10px; border-radius: 8px; border: none;
+                   background: #6cf7ff; color: #05050a; font-weight: bold; font-size: 13px; cursor: pointer; }
   </style>
 </head>
 <body>
   <canvas id="scene-canvas"></canvas>
   <video id="webcam-video" autoplay playsinline muted></video>
-  <canvas id="debug-canvas" width="220" height="165"></canvas>
-  <div id="hud"></div>
+  <canvas id="debug-canvas" width="180" height="135"></canvas>
   <div id="isotope-panel"></div>
   <div id="isotope-menu"></div>
+  <div id="instrument-panel"></div>
   <button id="help-reopen-btn">?</button>
-  <div id="gesture-debug">waiting for hand tracker…</div>
+  <div id="gesture-debug">waiting for tracker…</div>
   <div id="flash-overlay"></div>
   <div id="status-overlay"></div>
   <div id="help-overlay"></div>
