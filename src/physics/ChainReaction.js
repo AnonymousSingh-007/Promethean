@@ -12,6 +12,12 @@ export const EVENTS = {
   CASCADE_COMPLETE: 'cascade_complete',
 };
 
+// Safety cap: a neutron bouncing forever in a highly-scattering medium
+// (U-238 thermal scatter is 81.6%) would never resolve. Real neutrons do
+// eventually leak out of a finite geometry; this cap approximates that
+// escape, tracked honestly as "escaped" rather than silently dropped.
+const MAX_SCATTERS_PER_NEUTRON = 6;
+
 const DEFAULT_ORIGIN = { x: 0, y: 0, z: 20 };
 
 // Real elastic scattering off a heavy nucleus barely changes a neutron's
