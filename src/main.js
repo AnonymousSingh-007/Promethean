@@ -2,7 +2,7 @@ import { SceneManager } from './core/SceneManager.js';
 import { HandTracker } from './core/HandTracker.js';
 import { GestureController, GESTURES } from './core/GestureController.js';
 import { GestureLogger } from './core/GestureLogger.js';
-import { ChainReaction } from './physics/ChainReaction.js';
+import { ChainReaction, EVENTS } from './physics/ChainReaction.js';
 import { ISOTOPES, KEY_TO_ISOTOPE } from './physics/IsotopeData.js';
 import { ParticleSystem } from './vfx/ParticleSystem.js';
 import { HitStop } from './vfx/HitStop.js';
@@ -50,7 +50,29 @@ chainReaction.buildNeighborGraph();
 let selectedIsotopeId = 'U235';
 let lastHandVisible = false;
 let containmentActive = false;
-let heat = 0; // module-scope now — selectIsotope() needs to reset it, not just animate()
+let heat = 0;
+let manualSlowMo = false;
+
+// --- Fission rate tracking (drives time dilation) ---
+// The previous model set heat from raw live-neutron count, which meant
+// firing 110 neutrons pinned the sim to minimum speed on frame ONE, before
+// any chain reaction had started — so the barrage crawled in and nothing
+// read as a cascade. Time dilation should respond to the chain reaction
+// ACCELERATING (fissions per second), not to how many neutrons the user
+// happened to fire. This tracks fissions in a rolling ~0.5s window.
+const FISSION_RATE_WINDOW = 0.5;
+const FISSION_RATE_FOR_FULL_HEAT = 25;
+let fissionTimestamps = [];
+
+chainReaction.on(EVENTS.ATOM_FISSIONED, () => {
+  fissionTimestamps.push(performance.now() / 1000);
+});
+
+function currentFissionRate() {
+  const now = performance.now() / 1000;
+  fissionTimestamps = fissionTimestamps.filter(t => now - t < FISSION_RATE_WINDOW);
+  return fissionTimestamps.length / FISSION_RATE_WINDOW;
+}
 
 sceneManager.setActiveIsotope(selectedIsotopeId);
 isotopePanel.show(selectedIsotopeId);
@@ -61,14 +83,14 @@ function selectIsotope(isotopeId, keyPressed, source = 'keyboard') {
   if (!isotopeId || isotopeId === selectedIsotopeId) return;
   selectedIsotopeId = isotopeId;
 
-  // Full reset — nothing from the previous isotope should carry over.
-  chainReaction.hardReset(isotopeId);       // clears every in-flight neutron + stats, revives new isotope's atoms
-  sceneManager.setActiveIsotope(isotopeId); // swaps active cluster, revives its visual instance-alive flags
-  particles.clearAll();                     // wipes lingering trails/bursts/lineage web
-  hitStop.forceClear();                     // cancels any active freeze/flash
+  chainReaction.hardReset(isotopeId);
+  sceneManager.setActiveIsotope(isotopeId);
+  particles.clearAll();
+  hitStop.forceClear();
   chargeEffect.cancel();
   heat = 0;
-  sceneManager.setHeat(0);                  // snap ambient color back to baseline instantly, no lerp
+  fissionTimestamps = [];
+  sceneManager.setHeat(0);
 
   isotopePanel.show(isotopeId);
   playSelectTone(keyPressed - 1);
@@ -163,6 +185,14 @@ window.addEventListener('keydown', (e) => {
     chainReaction.setContainment(containmentActive);
     logger.log('containment_toggled', { active: containmentActive });
   }
+  // Manual observation slow-motion — hold Shift to force the sim down to 15%
+  // speed at any moment, so you can deliberately inspect a cascade rather
+  // than only seeing dilation when the automatic system decides to apply it.
+  if (e.key === 'Shift') manualSlowMo = true;
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') manualSlowMo = false;
 });
 
 helpModal.show();
@@ -181,12 +211,16 @@ function animate() {
   hitStop.update(dt);
   chargeEffect.updateFrame(dt);
 
-  const targetHeat = Math.min(1, chainReaction.stats.liveNeutrons / 30);
-  heat += (targetHeat - heat) * Math.min(1, dt * 2.5);
+  // Heat now tracks how fast the chain reaction is ACTUALLY fissioning, so
+  // an incoming barrage flies in at full speed and time only slows as the
+  // cascade genuinely blooms.
+  const targetHeat = Math.min(1, currentFissionRate() / FISSION_RATE_FOR_FULL_HEAT);
+  heat += (targetHeat - heat) * Math.min(1, dt * 3.5);
   sceneManager.setHeat(heat);
   hitStop.setHeat(heat);
 
-  const timeScale = 1 - heat * 0.75;
+  const autoScale = 1 - heat * 0.65;   // floor 0.35 instead of 0.25 — less compounding with thermal speed
+  const timeScale = manualSlowMo ? Math.min(autoScale, 0.15) : autoScale;
   const simDt = dt * timeScale;
 
   if (!hitStop.isFrozen()) {
@@ -201,6 +235,8 @@ function animate() {
     generationCounts: chainReaction.generationCounts,
     containmentActive,
     timeScale,
+    fissionRate: currentFissionRate(),
+    manualSlowMo,
   });
 
   sceneManager.render();

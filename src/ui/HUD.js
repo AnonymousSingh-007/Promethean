@@ -18,17 +18,19 @@ export class HUD {
     const modeText = meta.containmentActive ? 'REACTOR (containment ON)' : 'WEAPON (uncontained)';
     const modeColor = meta.containmentActive ? '#6cf7ff' : '#ff6c6c';
     const timeScalePct = meta.timeScale != null ? Math.round(meta.timeScale * 100) : 100;
+    const slowMoTag = meta.manualSlowMo ? ' <span style="color:#ffd76c">[SHIFT SLOW-MO]</span>' : '';
 
     this.el.innerHTML = `
       <div>HANDS VISIBLE: ${meta.handCount ?? 0}</div>
-      <div>MODE: <strong style="color:${modeColor}">${modeText}</strong> <span style="opacity:0.6">(C to toggle)</span></div>
+      <div>MODE: <strong style="color:${modeColor}">${modeText}</strong> <span style="opacity:0.6">(C)</span></div>
       <div>NEUTRONS LIVE: ${stats.liveNeutrons}</div>
       <div>FISSIONED: ${stats.fissioned} · ABSORBED: ${stats.absorbed}</div>
       <div>SCATTERED: ${stats.scattered} · ESCAPED: ${stats.escaped}</div>
+      <div>FISSION RATE: ${(meta.fissionRate ?? 0).toFixed(1)}/s</div>
       <div>ENERGY RELEASED: ${stats.energyReleased}</div>
       <div>CASCADE DEPTH: ${stats.maxCascadeDepth}</div>
       <div>GENERATIONS: ${genStr}</div>
-      <div>TIME SCALE: ${timeScalePct}%</div>
+      <div>TIME SCALE: ${timeScalePct}%${slowMoTag}</div>
       <div style="margin-top:4px;">k_eff: <strong>${stats.kEff ?? '—'}</strong>
         <span style="color:${crit.color}; font-weight:bold;">${crit.text}</span>
       </div>
