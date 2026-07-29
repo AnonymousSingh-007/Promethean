@@ -1,15 +1,11 @@
-// Neutrons travel at constant SPEED (distance-dependent, not time-fixed), and
-// now that speed differs by energy state: thermal neutrons ARE physically
-// slower than fast ones — in reality dramatically so (~2200 m/s thermal vs
-// ~2×10^7 m/s for a ~2 MeV fission neutron, a ratio of roughly 10,000:1).
-// We compress that to a visible 1:0.4 ratio here — a real thermal-speed
-// neutron at true scale would be imperceptibly slow relative to a fast one
-// on screen. The DIRECTION of the effect (thermal is slower) is real physics;
-// the MAGNITUDE is compressed for visibility. This is a deliberate, documented
-// simplification, not an attempt at literal speed accuracy.
-
-export const NEUTRON_SPEED = 7;           // base speed for FAST neutrons, units/sec
-export const THERMAL_SPEED_FACTOR = 0.4;  // thermal neutrons travel at this fraction of NEUTRON_SPEED
+// Thermal neutrons travel slower than fast ones — real physics (~10,000:1 in
+// reality, compressed here for visibility). The factor was 0.4, which
+// compounded badly with global time dilation (a thermal neutron during a
+// dense cascade ended up ~10x slower than a fast neutron at normal speed,
+// which read as "frozen," not "dramatic"). Raised to 0.55 so the direction
+// of the effect stays real but the compounding stays watchable.
+export const NEUTRON_SPEED = 7;
+export const THERMAL_SPEED_FACTOR = 0.55;
 export const MIN_NEUTRON_TRAVEL_TIME = 0.18;
 
 export function computeTravelTime(from, to, energyState = 'fast') {
